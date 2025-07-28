@@ -1,5 +1,5 @@
 // app/courses/page.tsx
-import { ClientCourseCard } from '@/components/ClientCourseCard'
+import { CourseCard } from '@/components/CourseCard'
 import { getGroupedCourses } from '@/lib/data/courses'
 
 export default function CoursesPage() {
@@ -19,7 +19,7 @@ export default function CoursesPage() {
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr">
           {groupedCourses.map((courseGroup) => (
-            <ClientCourseCard 
+            <CourseCard 
               key={courseGroup[0].course.id} 
               courseGroup={courseGroup} 
             />

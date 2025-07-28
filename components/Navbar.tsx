@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useUser, useClerk, SignInButton, SignUpButton } from '@clerk/nextjs'
+import { useUser, useClerk, SignInButton } from '@clerk/nextjs'
 import { 
   ShoppingCart, 
   GraduationCap, 
@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { useCartStore } from '@/lib/store/cart-store'
+import { CartIcon } from '@/components/CartIcon'
 
 export function Navbar() {
   const { isLoaded, isSignedIn, user } = useUser()
@@ -33,9 +34,8 @@ export function Navbar() {
   const cartRef = useRef<HTMLDivElement>(null)
   
   // Cart functionality
-  const { items, removeItem, getItemCount, getSubtotal, hydrated } = useCartStore()
-  const itemCount = hydrated ? getItemCount() : 0
-  const subtotal = hydrated ? getSubtotal() : 0
+  const { items, removeItem, getSubtotal } = useCartStore()
+  const subtotal = getSubtotal()
 
   const handleLogout = async () => {
     await signOut()
@@ -151,20 +151,7 @@ export function Navbar() {
             <div className="flex items-center space-x-2 sm:space-x-3">
               {/* Shopping Cart with Dropdown */}
               <div className="relative" ref={cartRef}>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="relative text-gray-600 hover:text-gray-900 hover:bg-purple-50/50 rounded-full w-9 h-9 sm:w-10 sm:h-10 transition-all duration-200 hover:scale-110"
-                  onClick={() => setIsCartOpen(!isCartOpen)}
-                  data-cart-button
-                >
-                  <ShoppingCart className="h-4 w-4 sm:h-5 sm:w-5" />
-                  {hydrated && itemCount > 0 && (
-                    <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-purple-600 text-white text-xs">
-                      {itemCount}
-                    </Badge>
-                  )}
-                </Button>
+                <CartIcon onClick={() => setIsCartOpen(!isCartOpen)} />
                 
                 {/* Cart Dropdown */}
                 {isCartOpen && (
@@ -178,12 +165,7 @@ export function Navbar() {
                     
                     {/* Cart Items */}
                     <div className="max-h-[300px] overflow-y-auto">
-                      {!hydrated ? (
-                        <div className="py-12 text-center text-gray-500">
-                          <div className="h-12 w-12 mx-auto mb-3 animate-spin rounded-full border-2 border-gray-300 border-t-purple-600" />
-                          <p className="text-sm">Loading cart...</p>
-                        </div>
-                      ) : items.length === 0 ? (
+                      {items.length === 0 ? (
                         <div className="py-12 text-center text-gray-500">
                           <ShoppingCart className="h-12 w-12 mx-auto mb-3 text-gray-300" />
                           <p className="text-sm">Your cart is empty</p>
@@ -226,7 +208,7 @@ export function Navbar() {
                     </div>
                     
                     {/* Cart Footer */}
-                    {hydrated && items.length > 0 && (
+                    {items.length > 0 && (
                       <div className="p-4 border-t border-purple-100/60 space-y-3">
                         <div className="flex justify-between items-center">
                           <span className="font-semibold text-gray-900">Subtotal:</span>
