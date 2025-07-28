@@ -1,6 +1,6 @@
 // lib/store/cart-store.ts
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import { CourseData } from '../data/courses'
 
 export interface CartItem {
@@ -21,12 +21,16 @@ interface CartStore {
   getSubtotal: () => number
   isItemInCart: (courseId: string, planLabel: string) => boolean
   canAddToCart: (courseId: string, schoolId: string, bundlePackages?: string[]) => { canAdd: boolean; reason?: string }
+  hydrated: boolean
+  setHydrated: (state: boolean) => void
 }
 
 export const useCartStore = create<CartStore>()(
   persist(
     (set, get) => ({
       items: [],
+      hydrated: false,
+      setHydrated: (state) => set({ hydrated: state }),
       
       addItem: (item) => {
         set((state) => ({
@@ -89,7 +93,7 @@ export const useCartStore = create<CartStore>()(
           for (const bundleItem of bundlesInCart) {
             // Find the bundle's package info from coursesData
             const bundleData = coursesData.find(
-              (data: CourseData) => data.course.id === bundleItem.courseId && 
+              (data:CourseData)=> data.course.id === bundleItem.courseId && 
                      data.course.category === 'bundle'
             )
             
@@ -107,6 +111,10 @@ export const useCartStore = create<CartStore>()(
     }),
     {
       name: 'cart-storage',
+      storage: createJSONStorage(() => localStorage),
+      onRehydrateStorage: () => (state) => {
+        state?.setHydrated(true)
+      },
     }
   )
 )

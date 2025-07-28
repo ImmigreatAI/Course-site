@@ -33,9 +33,9 @@ export function Navbar() {
   const cartRef = useRef<HTMLDivElement>(null)
   
   // Cart functionality
-  const { items, removeItem, getItemCount, getSubtotal } = useCartStore()
-  const itemCount = getItemCount()
-  const subtotal = getSubtotal()
+  const { items, removeItem, getItemCount, getSubtotal, hydrated } = useCartStore()
+  const itemCount = hydrated ? getItemCount() : 0
+  const subtotal = hydrated ? getSubtotal() : 0
 
   const handleLogout = async () => {
     await signOut()
@@ -159,7 +159,7 @@ export function Navbar() {
                   data-cart-button
                 >
                   <ShoppingCart className="h-4 w-4 sm:h-5 sm:w-5" />
-                  {itemCount > 0 && (
+                  {hydrated && itemCount > 0 && (
                     <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-purple-600 text-white text-xs">
                       {itemCount}
                     </Badge>
@@ -178,7 +178,12 @@ export function Navbar() {
                     
                     {/* Cart Items */}
                     <div className="max-h-[300px] overflow-y-auto">
-                      {items.length === 0 ? (
+                      {!hydrated ? (
+                        <div className="py-12 text-center text-gray-500">
+                          <div className="h-12 w-12 mx-auto mb-3 animate-spin rounded-full border-2 border-gray-300 border-t-purple-600" />
+                          <p className="text-sm">Loading cart...</p>
+                        </div>
+                      ) : items.length === 0 ? (
                         <div className="py-12 text-center text-gray-500">
                           <ShoppingCart className="h-12 w-12 mx-auto mb-3 text-gray-300" />
                           <p className="text-sm">Your cart is empty</p>
@@ -221,7 +226,7 @@ export function Navbar() {
                     </div>
                     
                     {/* Cart Footer */}
-                    {items.length > 0 && (
+                    {hydrated && items.length > 0 && (
                       <div className="p-4 border-t border-purple-100/60 space-y-3">
                         <div className="flex justify-between items-center">
                           <span className="font-semibold text-gray-900">Subtotal:</span>
