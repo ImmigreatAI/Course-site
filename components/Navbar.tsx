@@ -1,0 +1,427 @@
+'use client'
+
+import React, { useState, useRef, useEffect } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useUser, useClerk, SignInButton, SignUpButton } from '@clerk/nextjs'
+import { 
+  ShoppingCart, 
+  GraduationCap, 
+  LogOut,
+  BookOpen,
+  Phone,
+  Info,
+  Menu,
+  X,
+  Trash2
+} from 'lucide-react'
+
+import { Button } from '@/components/ui/button'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Badge } from '@/components/ui/badge'
+import { useCartStore } from '@/lib/store/cart-store'
+
+export function Navbar() {
+  const { isLoaded, isSignedIn, user } = useUser()
+  const { signOut } = useClerk()
+  const router = useRouter()
+  const [isProfileOpen, setIsProfileOpen] = useState(false)
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [isCartOpen, setIsCartOpen] = useState(false)
+  const profileRef = useRef<HTMLDivElement>(null)
+  const mobileMenuRef = useRef<HTMLDivElement>(null)
+  const cartRef = useRef<HTMLDivElement>(null)
+  
+  // Cart functionality
+  const { items, removeItem, getItemCount, getSubtotal } = useCartStore()
+  const itemCount = getItemCount()
+  const subtotal = getSubtotal()
+
+  const handleLogout = async () => {
+    await signOut()
+    router.push('/')
+    setIsProfileOpen(false)
+    setIsMobileMenuOpen(false)
+  }
+
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(word => word[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2)
+  }
+
+  const closeMobileMenu = () => {
+    setIsMobileMenuOpen(false)
+  }
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node
+      
+      // Close profile dropdown if clicking outside
+      if (profileRef.current && !profileRef.current.contains(target)) {
+        setIsProfileOpen(false)
+      }
+      
+      // Close cart dropdown if clicking outside
+      if (cartRef.current && !cartRef.current.contains(target)) {
+        const cartButton = document.querySelector('[data-cart-button]')
+        if (cartButton && !cartButton.contains(target)) {
+          setIsCartOpen(false)
+        }
+      }
+      
+      // Close mobile menu if clicking outside (but not on the hamburger button)
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(target)) {
+        const hamburgerButton = document.querySelector('[data-hamburger-button]')
+        if (hamburgerButton && !hamburgerButton.contains(target)) {
+          setIsMobileMenuOpen(false)
+        }
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Prevent body scroll when mobile menu is open
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = 'unset'
+    }
+    
+    return () => {
+      document.body.style.overflow = 'unset'
+    }
+  }, [isMobileMenuOpen])
+
+  return (
+    <>
+      <header className="fixed top-4 left-4 right-4 z-50">
+        <div className="mx-auto max-w-6xl backdrop-blur-3xl bg-gradient-to-r from-purple-50/20 via-white/30 to-purple-50/20 border border-purple-200/40 rounded-full shadow-lg shadow-purple-100/50 hover:shadow-xl hover:shadow-purple-200/40 hover:-translate-y-0.5 transition-all duration-300">
+          <div className="flex items-center justify-between h-16 px-4 sm:px-6">
+            
+            {/* Left Side - Logo */}
+            <Link 
+              href="/" 
+              className="text-xl sm:text-2xl font-bold text-gray-900 hover:text-purple-700 transition-colors duration-200 truncate"
+              style={{ fontFamily: 'Pacifico, cursive' }}
+            >
+              immigreat.ai
+            </Link>
+
+            {/* Center - Desktop Navigation */}
+            <nav className="hidden lg:flex items-center space-x-6 xl:space-x-8">
+              <Link href="/courses">
+                <Button 
+                  variant="ghost" 
+                  className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 hover:bg-purple-50/50 font-medium transition-all duration-200 hover:scale-105"
+                >
+                  <BookOpen className="h-4 w-4" />
+                  <span>Courses</span>
+                </Button>
+              </Link>
+              <Link href="/contact">
+                <Button 
+                  variant="ghost" 
+                  className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 hover:bg-purple-50/50 font-medium transition-all duration-200 hover:scale-105"
+                >
+                  <Phone className="h-4 w-4" />
+                  <span>Contact</span>
+                </Button>
+              </Link>
+              <Link href="/about">
+                <Button 
+                  variant="ghost" 
+                  className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 hover:bg-purple-50/50 font-medium transition-all duration-200 hover:scale-105"
+                >
+                  <Info className="h-4 w-4" />
+                  <span>About</span>
+                </Button>
+              </Link>
+            </nav>
+
+            {/* Right Side - Actions */}
+            <div className="flex items-center space-x-2 sm:space-x-3">
+              {/* Shopping Cart with Dropdown */}
+              <div className="relative" ref={cartRef}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="relative text-gray-600 hover:text-gray-900 hover:bg-purple-50/50 rounded-full w-9 h-9 sm:w-10 sm:h-10 transition-all duration-200 hover:scale-110"
+                  onClick={() => setIsCartOpen(!isCartOpen)}
+                  data-cart-button
+                >
+                  <ShoppingCart className="h-4 w-4 sm:h-5 sm:w-5" />
+                  {itemCount > 0 && (
+                    <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 bg-purple-600 text-white text-xs">
+                      {itemCount}
+                    </Badge>
+                  )}
+                </Button>
+                
+                {/* Cart Dropdown */}
+                {isCartOpen && (
+                  <div className={`absolute right-0 top-12 w-80 sm:w-96 max-h-[500px] z-[100] bg-white/95 backdrop-blur-xl border border-purple-200/60 rounded-2xl shadow-2xl shadow-purple-100/50 overflow-hidden
+                    ${isCartOpen ? 'animate-in slide-in-from-top-2 fade-in-0 zoom-in-95 duration-200' : 'animate-out slide-out-to-top-2 fade-out-0 zoom-out-95 duration-150'}`}>
+                    
+                    {/* Cart Header */}
+                    <div className="p-4 border-b border-purple-100/60">
+                      <h3 className="text-lg font-semibold text-gray-900">Shopping Cart</h3>
+                    </div>
+                    
+                    {/* Cart Items */}
+                    <div className="max-h-[300px] overflow-y-auto">
+                      {items.length === 0 ? (
+                        <div className="py-12 text-center text-gray-500">
+                          <ShoppingCart className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                          <p className="text-sm">Your cart is empty</p>
+                        </div>
+                      ) : (
+                        <div className="p-2 space-y-2">
+                          {items.map((item) => (
+                            <div 
+                              key={`${item.courseId}-${item.planLabel}`}
+                              className="flex items-start p-3 rounded-xl hover:bg-purple-50/50 transition-all duration-200"
+                            >
+                              <div className="flex-1 min-w-0 mr-2">
+                                <p className="font-medium text-sm text-gray-900 line-clamp-2">
+                                  {item.courseName}
+                                </p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <Badge variant="outline" className="text-xs">
+                                    {item.planLabel === '6mo' ? '6 months' : '7 days'}
+                                  </Badge>
+                                  <span className="text-sm font-semibold text-purple-700">
+                                    ${item.price}
+                                  </span>
+                                </div>
+                              </div>
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  removeItem(item.courseId, item.planLabel)
+                                }}
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 hover:bg-red-50 text-red-500 hover:text-red-600"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Cart Footer */}
+                    {items.length > 0 && (
+                      <div className="p-4 border-t border-purple-100/60 space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold text-gray-900">Subtotal:</span>
+                          <span className="text-xl font-bold text-purple-700">
+                            ${subtotal}
+                          </span>
+                        </div>
+                        <Button
+                          className="w-full bg-purple-600 hover:bg-purple-700 text-white rounded-xl py-2.5 transition-all duration-200 hover:scale-105"
+                          onClick={() => {
+                            setIsCartOpen(false)
+                            router.push('/checkout')
+                          }}
+                        >
+                          Checkout
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Mobile Menu Button */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="lg:hidden text-gray-600 hover:text-gray-900 hover:bg-purple-50/50 rounded-full w-9 h-9 sm:w-10 sm:h-10 transition-all duration-200"
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                data-hamburger-button
+              >
+                {isMobileMenuOpen ? (
+                  <X className="h-5 w-5" />
+                ) : (
+                  <Menu className="h-5 w-5" />
+                )}
+              </Button>
+
+              {/* Auth & Profile */}
+              {!isLoaded ? (
+                <div className="h-9 w-16 sm:h-10 sm:w-20 bg-gradient-to-r from-gray-200 to-gray-300 animate-pulse rounded-full" />
+              ) : !isSignedIn ? (
+                <SignInButton mode="modal">
+                  <Button className="bg-black text-white hover:bg-gray-800 rounded-full px-3 sm:px-6 text-sm transition-all duration-200 hover:scale-105 hover:shadow-lg">
+                    Log In
+                  </Button>
+                </SignInButton>
+              ) : (
+                <div className="relative" ref={profileRef}>
+                  {/* Profile Avatar */}
+                  <div className="relative group">
+                    <Avatar 
+                      className="h-9 w-9 sm:h-10 sm:w-10 cursor-pointer hover:ring-2 hover:ring-purple-300 hover:ring-offset-2 transition-all duration-200 hover:scale-110"
+                      onClick={() => setIsProfileOpen(!isProfileOpen)}
+                    >
+                      <AvatarImage src={user.imageUrl} alt={user.fullName || 'User'} />
+                      <AvatarFallback className="bg-gradient-to-br from-purple-500 to-blue-600 text-white font-semibold text-xs sm:text-sm">
+                        {getInitials(user.fullName || user.username || 'U')}
+                      </AvatarFallback>
+                    </Avatar>
+
+                    {/* Hover tooltip - Hidden on mobile */}
+                    <div className="hidden sm:block absolute -top-10 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
+                      {user.fullName || user.username}
+                      <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-black"></div>
+                    </div>
+                  </div>
+                  
+                  {/* Profile Popup */}
+                  {isProfileOpen && (
+                    <div className={`absolute right-0 top-12 w-72 sm:w-80 z-[100] bg-white/95 backdrop-blur-xl border border-purple-200/60 rounded-2xl shadow-2xl shadow-purple-100/50 
+                      ${isProfileOpen ? 'animate-in slide-in-from-top-2 fade-in-0 zoom-in-95 duration-200' : 'animate-out slide-out-to-top-2 fade-out-0 zoom-out-95 duration-150'}`}>
+                      
+                      {/* Profile Header */}
+                      <div className="p-4 border-b border-purple-100/60">
+                        <div className="flex items-center space-x-3">
+                          <Avatar className="h-12 w-12 ring-2 ring-purple-100">
+                            <AvatarImage src={user.imageUrl} alt={user.fullName || 'User'} />
+                            <AvatarFallback className="bg-gradient-to-br from-purple-500 to-blue-600 text-white font-semibold">
+                              {getInitials(user.fullName || user.username || 'U')}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-gray-900 truncate">
+                              {user.fullName || user.username}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {user.primaryEmailAddress?.emailAddress}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Menu Items */}
+                      <div className="p-2">
+                        <Link href="/my-courses" onClick={() => setIsProfileOpen(false)}>
+                          <div className="flex items-center px-3 py-2.5 rounded-xl cursor-pointer hover:bg-purple-50 transition-all duration-200 group hover:translate-x-1">
+                            <GraduationCap className="mr-3 h-4 w-4 text-purple-600 group-hover:scale-110 transition-transform duration-200" />
+                            <span className="text-sm text-gray-700 font-medium group-hover:text-gray-900">My Courses</span>
+                          </div>
+                        </Link>
+                        
+                        <div className="my-2 border-t border-purple-100/60"></div>
+                        
+                        <div 
+                          className="flex items-center px-3 py-2.5 rounded-xl cursor-pointer hover:bg-red-50 transition-all duration-200 text-red-600 group hover:translate-x-1"
+                          onClick={handleLogout}
+                        >
+                          <LogOut className="mr-3 h-4 w-4 group-hover:scale-110 transition-transform duration-200" />
+                          <span className="text-sm font-medium group-hover:text-red-700">Logout</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+          </div>
+        </div>
+      </header>
+
+      {/* Mobile Menu Overlay */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden">
+          {/* Backdrop */}
+          <div 
+            className="fixed inset-0 bg-black/20 backdrop-blur-sm animate-in fade-in-0 duration-200"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+          
+          {/* Mobile Menu */}
+          <div 
+            ref={mobileMenuRef}
+            className={`fixed top-24 left-4 right-4 bg-white/95 backdrop-blur-xl border border-purple-200/60 rounded-2xl shadow-2xl shadow-purple-100/50 overflow-hidden
+              ${isMobileMenuOpen ? 'animate-in slide-in-from-top-4 fade-in-0 zoom-in-95 duration-300' : 'animate-out slide-out-to-top-4 fade-out-0 zoom-out-95 duration-200'}`}
+          >
+            {/* Navigation Items */}
+            <div className="p-4 space-y-2">
+              <Link href="/courses" onClick={closeMobileMenu}>
+                <div className="flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-purple-50 transition-all duration-200 group">
+                  <BookOpen className="h-5 w-5 text-purple-600 group-hover:scale-110 transition-transform duration-200" />
+                  <span className="text-base font-medium text-gray-700 group-hover:text-gray-900">Courses</span>
+                </div>
+              </Link>
+              
+              <Link href="/contact" onClick={closeMobileMenu}>
+                <div className="flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-purple-50 transition-all duration-200 group">
+                  <Phone className="h-5 w-5 text-purple-600 group-hover:scale-110 transition-transform duration-200" />
+                  <span className="text-base font-medium text-gray-700 group-hover:text-gray-900">Contact</span>
+                </div>
+              </Link>
+              
+              <Link href="/about" onClick={closeMobileMenu}>
+                <div className="flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-purple-50 transition-all duration-200 group">
+                  <Info className="h-5 w-5 text-purple-600 group-hover:scale-110 transition-transform duration-200" />
+                  <span className="text-base font-medium text-gray-700 group-hover:text-gray-900">About</span>
+                </div>
+              </Link>
+
+              {/* Mobile Auth Section */}
+              {isSignedIn && (
+                <>
+                  <div className="my-4 border-t border-purple-100/60"></div>
+                  
+                  <Link href="/my-courses" onClick={closeMobileMenu}>
+                    <div className="flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-purple-50 transition-all duration-200 group">
+                      <GraduationCap className="h-5 w-5 text-purple-600 group-hover:scale-110 transition-transform duration-200" />
+                      <span className="text-base font-medium text-gray-700 group-hover:text-gray-900">My Courses</span>
+                    </div>
+                  </Link>
+                  
+                  <div 
+                    className="flex items-center space-x-3 px-4 py-3 rounded-xl hover:bg-red-50 transition-all duration-200 text-red-600 group cursor-pointer"
+                    onClick={handleLogout}
+                  >
+                    <LogOut className="h-5 w-5 group-hover:scale-110 transition-transform duration-200" />
+                    <span className="text-base font-medium group-hover:text-red-700">Logout</span>
+                  </div>
+                </>
+              )}
+              
+              {!isSignedIn && (
+                <>
+                  <div className="my-4 border-t border-purple-100/60"></div>
+                  <div className="px-4">
+                    <SignInButton mode="modal">
+                      <Button 
+                        className="w-full bg-black text-white hover:bg-gray-800 rounded-xl py-3 transition-all duration-200 hover:scale-105"
+                        onClick={closeMobileMenu}
+                      >
+                        Log In
+                      </Button>
+                    </SignInButton>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
