@@ -14,12 +14,17 @@ export function CartIcon({ onClick }: CartIconProps) {
   const isHydrated = useCartHydration()
   const itemCount = useCartStore((state) => state.items.length)
   
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onClick()
+  }
+  
   return (
     <Button
       variant="ghost"
       size="icon"
       className="relative text-gray-600 hover:text-gray-900 hover:bg-purple-50/50 rounded-full w-9 h-9 sm:w-10 sm:h-10 transition-all duration-200 hover:scale-110"
-      onClick={onClick}
+      onClick={handleClick}
       data-cart-button
     >
       <ShoppingCart className="h-4 w-4 sm:h-5 sm:w-5" />

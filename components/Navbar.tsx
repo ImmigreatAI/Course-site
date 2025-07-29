@@ -5,22 +5,19 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useUser, useClerk, SignInButton } from '@clerk/nextjs'
 import { 
-  ShoppingCart, 
   GraduationCap, 
   LogOut,
   BookOpen,
   Phone,
   Info,
   Menu,
-  X,
-  Trash2
+  X
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Badge } from '@/components/ui/badge'
-import { useCartStore } from '@/lib/store/cart-store'
 import { CartIcon } from '@/components/CartIcon'
+import { CartDropdown } from '@/components/CartDropdown'
 
 export function Navbar() {
   const { isLoaded, isSignedIn, user } = useUser()
@@ -31,12 +28,7 @@ export function Navbar() {
   const [isCartOpen, setIsCartOpen] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
-  const cartRef = useRef<HTMLDivElement>(null)
   
-  // Cart functionality
-  const { items, removeItem, getSubtotal } = useCartStore()
-  const subtotal = getSubtotal()
-
   const handleLogout = async () => {
     await signOut()
     router.push('/')
@@ -67,14 +59,6 @@ export function Navbar() {
         setIsProfileOpen(false)
       }
       
-      // Close cart dropdown if clicking outside
-      if (cartRef.current && !cartRef.current.contains(target)) {
-        const cartButton = document.querySelector('[data-cart-button]')
-        if (cartButton && !cartButton.contains(target)) {
-          setIsCartOpen(false)
-        }
-      }
-      
       // Close mobile menu if clicking outside (but not on the hamburger button)
       if (mobileMenuRef.current && !mobileMenuRef.current.contains(target)) {
         const hamburgerButton = document.querySelector('[data-hamburger-button]')
@@ -88,9 +72,11 @@ export function Navbar() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Prevent body scroll when mobile menu is open
+  // Prevent body scroll when mobile menu or cart is open
   useEffect(() => {
-    if (isMobileMenuOpen) {
+    const shouldLockScroll = isMobileMenuOpen || isCartOpen
+    
+    if (shouldLockScroll) {
       document.body.style.overflow = 'hidden'
     } else {
       document.body.style.overflow = 'unset'
@@ -99,7 +85,7 @@ export function Navbar() {
     return () => {
       document.body.style.overflow = 'unset'
     }
-  }, [isMobileMenuOpen])
+  }, [isMobileMenuOpen, isCartOpen])
 
   return (
     <>
@@ -110,8 +96,7 @@ export function Navbar() {
             {/* Left Side - Logo */}
             <Link 
               href="/" 
-              className="text-xl sm:text-2xl font-bold text-gray-900 hover:text-purple-700 transition-colors duration-200 truncate"
-              style={{ fontFamily: 'Pacifico, cursive' }}
+              className="text-xl sm:text-2xl font-bold text-gray-900 hover:text-purple-700 transition-colors duration-200 truncate font-[family-name:var(--font-pacifico)]"
             >
               immigreat.ai
             </Link>
@@ -150,85 +135,9 @@ export function Navbar() {
             {/* Right Side - Actions */}
             <div className="flex items-center space-x-2 sm:space-x-3">
               {/* Shopping Cart with Dropdown */}
-              <div className="relative" ref={cartRef}>
+              <div className="relative">
                 <CartIcon onClick={() => setIsCartOpen(!isCartOpen)} />
-                
-                {/* Cart Dropdown */}
-                {isCartOpen && (
-                  <div className={`absolute right-0 top-12 w-80 sm:w-96 max-h-[500px] z-[100] bg-white/95 backdrop-blur-xl border border-purple-200/60 rounded-2xl shadow-2xl shadow-purple-100/50 overflow-hidden
-                    ${isCartOpen ? 'animate-in slide-in-from-top-2 fade-in-0 zoom-in-95 duration-200' : 'animate-out slide-out-to-top-2 fade-out-0 zoom-out-95 duration-150'}`}>
-                    
-                    {/* Cart Header */}
-                    <div className="p-4 border-b border-purple-100/60">
-                      <h3 className="text-lg font-semibold text-gray-900">Shopping Cart</h3>
-                    </div>
-                    
-                    {/* Cart Items */}
-                    <div className="max-h-[300px] overflow-y-auto">
-                      {items.length === 0 ? (
-                        <div className="py-12 text-center text-gray-500">
-                          <ShoppingCart className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-                          <p className="text-sm">Your cart is empty</p>
-                        </div>
-                      ) : (
-                        <div className="p-2 space-y-2">
-                          {items.map((item) => (
-                            <div 
-                              key={`${item.courseId}-${item.planLabel}`}
-                              className="flex items-start p-3 rounded-xl hover:bg-purple-50/50 transition-all duration-200"
-                            >
-                              <div className="flex-1 min-w-0 mr-2">
-                                <p className="font-medium text-sm text-gray-900 line-clamp-2">
-                                  {item.courseName}
-                                </p>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <Badge variant="outline" className="text-xs">
-                                    {item.planLabel === '6mo' ? '6 months' : '7 days'}
-                                  </Badge>
-                                  <span className="text-sm font-semibold text-purple-700">
-                                    ${item.price}
-                                  </span>
-                                </div>
-                              </div>
-                              <Button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  removeItem(item.courseId, item.planLabel)
-                                }}
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 hover:bg-red-50 text-red-500 hover:text-red-600"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Cart Footer */}
-                    {items.length > 0 && (
-                      <div className="p-4 border-t border-purple-100/60 space-y-3">
-                        <div className="flex justify-between items-center">
-                          <span className="font-semibold text-gray-900">Subtotal:</span>
-                          <span className="text-xl font-bold text-purple-700">
-                            ${subtotal}
-                          </span>
-                        </div>
-                        <Button
-                          className="w-full bg-purple-600 hover:bg-purple-700 text-white rounded-xl py-2.5 transition-all duration-200 hover:scale-105"
-                          onClick={() => {
-                            setIsCartOpen(false)
-                            router.push('/checkout')
-                          }}
-                        >
-                          Checkout
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {isCartOpen && <CartDropdown isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />}
               </div>
 
               {/* Mobile Menu Button */}

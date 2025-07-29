@@ -1,9 +1,19 @@
+/* app/globals.css */
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Add this to define the Pacifico font family */
+:root {
+  --font-pacifico: 'Pacifico', cursive;
+}
+
+/* Your existing styles */
+body {
+  padding-top: 0;
+}
 
 main {
-  padding-top: 5rem; /* 80px equivalent */
+  padding-top: 5rem;
 }
 
 /* Hide navigation on mobile - Tailwind handles this with md:flex but adding for clarity */
