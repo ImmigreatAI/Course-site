@@ -10,27 +10,24 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
 interface CourseCardProps {
-  courseGroup: CourseData[]
+  course: CourseData
 }
 
-export function CourseCard({ courseGroup }: CourseCardProps) {
-  const [selectedPlan, setSelectedPlan] = useState<string>('6mo')
+export function CourseCard({ course }: CourseCardProps) {
+  const [selectedPlan, setSelectedPlan] = useState<string>(course.plans[0].label)
   const { addItem, isItemInCart, canAddToCart } = useCartStore()
   
-  // Get the first item to extract course info
-  const courseInfo = courseGroup[0].course
-  const isBundle = courseInfo.category === 'bundle'
+  const courseInfo = course.course
+  const isBundle = course.plans[0].category === 'bundle'
   
   // Get the currently selected plan data
-  const currentPlan = isBundle 
-    ? courseGroup[0] 
-    : courseGroup.find(item => item.plan.label === selectedPlan) || courseGroup[0]
+  const currentPlan = course.plans.find(plan => plan.label === selectedPlan) || course.plans[0]
   
-  const handleAddToCart = (item: CourseData) => {
+  const handleAddToCart = () => {
     const { canAdd, reason } = canAddToCart(
-      item.course.id,
-      item.plan.school_id,
-      item.course.package
+      courseInfo.Unique_id,
+      currentPlan.enrollment_id,
+      courseInfo.package
     )
     
     if (!canAdd) {
@@ -39,21 +36,26 @@ export function CourseCard({ courseGroup }: CourseCardProps) {
     }
     
     addItem({
-      courseId: item.course.id,
-      courseName: item.course.name,
-      planLabel: item.plan.label,
-      price: item.plan.price,
-      schoolId: item.plan.school_id,
-      stripePriceId: item.stripe_price_id,
+      courseId: courseInfo.Unique_id,
+      courseName: courseInfo.name,
+      planLabel: currentPlan.label,
+      price: currentPlan.price,
+      enrollmentId: currentPlan.enrollment_id,
+      stripePriceId: currentPlan.stripe_price_id, // Now guaranteed to be non-null
     })
     
     toast.success('Added to cart successfully!')
   }
   
-  const handleBuyNow = (item: CourseData) => {
-    handleAddToCart(item)
+  const handleBuyNow = () => {
+    handleAddToCart()
     // TODO: Redirect to checkout
   }
+  
+  // Check if ANY plan of this course is in cart
+  const isInCart = course.plans.some(plan => 
+    isItemInCart(courseInfo.Unique_id, plan.label)
+  )
   
   return (
     <div className="group relative h-full">
@@ -75,13 +77,13 @@ export function CourseCard({ courseGroup }: CourseCardProps) {
                   Bundle
                 </Badge>
               )}
-              {courseInfo.type === 'paid' && (
+              {currentPlan.type === 'paid' && (
                 <Badge className="bg-black text-white border-0 shadow-md">
                   <Sparkles className="w-3 h-3 mr-1" />
                   Premium
                 </Badge>
               )}
-              {courseInfo.type === 'free' && (
+              {currentPlan.type === 'free' && (
                 <Badge variant="outline" className="border-green-500 text-green-700 bg-green-50/50">
                   Free
                 </Badge>
@@ -97,20 +99,20 @@ export function CourseCard({ courseGroup }: CourseCardProps) {
         {/* Pricing Options Section - Flexible but contained */}
         <div className="flex-1 px-6 flex flex-col">
           {/* Plan Selection Buttons */}
-          {!isBundle && courseGroup.length > 1 && (
+          {!isBundle && course.plans.length > 1 && (
             <div className="flex gap-2 mb-4">
-              {courseGroup.map((item) => (
+              {course.plans.map((plan) => (
                 <button
-                  key={item.plan.label}
-                  onClick={() => setSelectedPlan(item.plan.label)}
+                  key={plan.label}
+                  onClick={() => setSelectedPlan(plan.label)}
                   className={cn(
                     "flex-1 py-2.5 px-4 rounded-xl font-medium text-sm transition-all duration-300",
-                    selectedPlan === item.plan.label
+                    selectedPlan === plan.label
                       ? "bg-gradient-to-r from-purple-100 to-pink-100 text-purple-900 shadow-md border border-purple-200/50"
                       : "bg-gray-50/50 text-gray-600 hover:bg-gray-100/70 border border-gray-200/30"
                   )}
                 >
-                  {item.plan.label === '6mo' ? '6 Months' : '7 Days'}
+                  {plan.label === '6mo' ? '6 Months' : '7 Days'}
                 </button>
               ))}
             </div>
@@ -123,14 +125,14 @@ export function CourseCard({ courseGroup }: CourseCardProps) {
                 <div className="flex items-center gap-2 text-gray-600 mb-1">
                   <Clock className="w-4 h-4" />
                   <span className="text-sm">
-                    {currentPlan.plan.label === '6mo' ? '6 months access' : '7 days access'}
+                    {currentPlan.label === '6mo' ? '6 months access' : '7 days access'}
                   </span>
                 </div>
                 <div className="flex items-baseline gap-1">
                   <span className="text-3xl font-bold text-gray-900">
-                    {currentPlan.plan.price === 0 ? 'Free' : `$${currentPlan.plan.price}`}
+                    {currentPlan.price === 0 ? 'Free' : `$${currentPlan.price}`}
                   </span>
-                  {currentPlan.plan.label === '7day' && currentPlan.plan.price > 0 && (
+                  {currentPlan.label === '7day' && currentPlan.price > 0 && (
                     <span className="text-sm text-purple-600 font-medium">trial</span>
                   )}
                 </div>
@@ -139,7 +141,7 @@ export function CourseCard({ courseGroup }: CourseCardProps) {
                 <div className="text-right">
                   <p className="text-xs text-gray-500">You save</p>
                   <p className="text-lg font-bold text-green-600">
-                    ${(199 * 2) - currentPlan.plan.price}
+                    ${(199 * 2) - currentPlan.price}
                   </p>
                 </div>
               )}
@@ -151,25 +153,25 @@ export function CourseCard({ courseGroup }: CourseCardProps) {
         <div className="p-6 pt-4">
           <div className="flex gap-3">
             <Button
-              onClick={() => handleAddToCart(currentPlan)}
-              disabled={isItemInCart(currentPlan.course.id, currentPlan.plan.label)}
+              onClick={handleAddToCart}
+              disabled={isInCart}
               variant="outline"
               className={cn(
                 "flex-1 h-11 rounded-xl font-medium transition-all duration-300",
-                isItemInCart(currentPlan.course.id, currentPlan.plan.label)
+                isInCart
                   ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
                   : "border-purple-300 text-purple-700 hover:bg-purple-50 hover:border-purple-400 hover:scale-105"
               )}
             >
               <ShoppingCart className="w-4 h-4 mr-2" />
-              {isItemInCart(currentPlan.course.id, currentPlan.plan.label) ? 'Added' : 'Add to Cart'}
+              {isInCart ? 'Added' : 'Add to Cart'}
             </Button>
             <Button
-              onClick={() => handleBuyNow(currentPlan)}
+              onClick={handleBuyNow}
               className="flex-1 h-11 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl font-medium shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
             >
               <CreditCard className="w-4 h-4 mr-2" />
-              {currentPlan.plan.price === 0 ? 'Enroll Free' : 'Buy Now'}
+              {currentPlan.price === 0 ? 'Enroll Free' : 'Buy Now'}
             </Button>
           </div>
         </div>

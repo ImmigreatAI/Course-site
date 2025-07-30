@@ -1,9 +1,8 @@
-// app/courses/page.tsx
 import { CourseCard } from '@/components/CourseCard'
-import { getGroupedCourses } from '@/lib/data/courses'
+import { getAllCourses } from '@/lib/data/courses'
 
 export default function CoursesPage() {
-  const groupedCourses = getGroupedCourses()
+  const courses = getAllCourses()
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50/30 via-white to-pink-50/30">
@@ -18,10 +17,10 @@ export default function CoursesPage() {
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr">
-          {groupedCourses.map((courseGroup) => (
+          {courses.map((course) => (
             <CourseCard 
-              key={courseGroup[0].course.id} 
-              courseGroup={courseGroup} 
+              key={course.course.Unique_id} 
+              course={course} 
             />
           ))}
         </div>

@@ -1,11 +1,14 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
-import { ShoppingCart, Trash2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ShoppingCart, Trash2, X, Loader2, AlertCircle } from 'lucide-react'
 import { useCartStore } from '@/lib/store/cart-store'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useRouter } from 'next/navigation'
+import { useUser } from '@clerk/nextjs'
+import { getStripe } from '@/lib/stripe/config'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
 interface CartDropdownProps {
@@ -13,11 +16,22 @@ interface CartDropdownProps {
   onClose: () => void
 }
 
+interface CheckoutResponse {
+  sessionId?: string
+  isFree: boolean
+  url?: string
+  enrollmentIds?: string[]
+  message?: string
+  error?: string
+}
+
 export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
   const router = useRouter()
+  const { isSignedIn, isLoaded } = useUser()
   const dropdownRef = useRef<HTMLDivElement>(null)
-  const { items, removeItem, getSubtotal } = useCartStore()
+  const { items, removeItem, getSubtotal, clearCart } = useCartStore()
   const subtotal = getSubtotal()
+  const [isLoading, setIsLoading] = useState(false)
   
   // Handle clicks outside
   useEffect(() => {
@@ -59,8 +73,106 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
     document.addEventListener('keydown', handleEscape)
     return () => document.removeEventListener('keydown', handleEscape)
   }, [isOpen, onClose])
+
+  const handleCheckout = async () => {
+    // Validate prerequisites
+    if (!isLoaded) {
+      toast.error('Please wait while we load your account information')
+      return
+    }
+
+    if (!isSignedIn) {
+      toast.error('Please sign in to continue with checkout')
+      onClose()
+      return
+    }
+
+    if (items.length === 0) {
+      toast.error('Your cart is empty')
+      return
+    }
+
+    setIsLoading(true)
+
+    try {
+      // Call checkout API
+      const response = await fetch('/api/stripe/checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ items }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const data: CheckoutResponse = await response.json()
+
+      // Handle free enrollment
+      if (data.isFree) {
+        toast.success(data.message || 'Free courses enrolled successfully!')
+        clearCart()
+        onClose()
+        router.push('/my-courses')
+        return
+      }
+
+      // Redirect to Stripe Checkout
+      if (!data.sessionId) {
+        throw new Error('No checkout session created')
+      }
+
+      const stripe = await getStripe()
+      if (!stripe) {
+        throw new Error('Payment system unavailable. Please try again.')
+      }
+
+      // Close dropdown before redirect
+      onClose()
+
+      const { error } = await stripe.redirectToCheckout({
+        sessionId: data.sessionId,
+      })
+
+      if (error) {
+        console.error('Stripe redirect error:', error)
+        toast.error(error.message || 'Payment redirect failed')
+      }
+
+    } catch (error) {
+      console.error('Checkout error:', error)
+      
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : 'An unexpected error occurred during checkout'
+      
+      toast.error(errorMessage)
+      
+      // Show user-friendly error for common issues
+      if (errorMessage.includes('network') || errorMessage.includes('fetch')) {
+        toast.error('Network error. Please check your connection and try again.')
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleRemoveItem = (courseId: string) => {
+    try {
+      removeItem(courseId)
+      toast.success('Item removed from cart')
+    } catch (error) {
+      console.error('Error removing item:', error)
+      toast.error('Failed to remove item')
+    }
+  }
   
   if (!isOpen) return null
+
+  const isCheckoutDisabled = isLoading || !isLoaded || !isSignedIn || items.length === 0
   
   return (
     <>
@@ -125,18 +237,19 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
                         {item.planLabel === '6mo' ? '6 months' : '7 days'}
                       </Badge>
                       <span className="text-sm font-semibold text-purple-700">
-                        ${item.price}
+                        {item.price === 0 ? 'Free' : `$${item.price}`}
                       </span>
                     </div>
                   </div>
                   <Button
                     onClick={(e) => {
                       e.stopPropagation()
-                      removeItem(item.courseId, item.planLabel)
+                      handleRemoveItem(item.courseId)
                     }}
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 hover:bg-red-50 text-red-400 hover:text-red-600 flex-shrink-0 transition-all duration-200"
+                    disabled={isLoading}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -149,20 +262,44 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
         {/* Cart Footer */}
         {items.length > 0 && (
           <div className="p-4 border-t border-purple-100/60 space-y-3 bg-purple-50/30">
+            {/* Show authentication warning if not signed in */}
+            {!isSignedIn && isLoaded && (
+              <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                <p className="text-xs text-amber-800">
+                  Please sign in to complete your purchase
+                </p>
+              </div>
+            )}
+            
             <div className="flex justify-between items-center">
               <span className="font-semibold text-gray-900">Subtotal:</span>
               <span className="text-xl font-bold text-purple-700">
-                ${subtotal}
+                {subtotal === 0 ? 'Free' : `$${subtotal}`}
               </span>
             </div>
+            
             <Button
-              className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl py-2.5 transition-all duration-200 hover:scale-[1.02] shadow-lg"
-              onClick={() => {
-                onClose()
-                router.push('/checkout')
-              }}
+              className={cn(
+                "w-full rounded-xl py-2.5 font-medium shadow-lg transition-all duration-200",
+                "bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white",
+                "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100",
+                !isCheckoutDisabled && "hover:scale-[1.02]"
+              )}
+              onClick={handleCheckout}
+              disabled={isCheckoutDisabled}
             >
-              Checkout
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  {subtotal === 0 ? 'Enroll Free' : 'Proceed to Checkout'}
+                  {!isLoaded && ' (Loading...)'}
+                </>
+              )}
             </Button>
           </div>
         )}
