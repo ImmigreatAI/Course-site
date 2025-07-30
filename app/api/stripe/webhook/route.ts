@@ -1,89 +1,229 @@
+// app/api/stripe/webhook/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerStripe } from '@/lib/stripe/config'
 import Stripe from 'stripe'
 
-// Use Edge runtime for Bun compatibility
-export const runtime = 'edge'
+// Use Node.js runtime for proper webhook handling
+export const runtime = 'nodejs'
 
-export async function POST(req: NextRequest) {
+interface WebhookResponse {
+  received?: boolean
+  eventId?: string
+  eventType?: string
+  error?: string
+}
+
+export async function POST(req: NextRequest): Promise<NextResponse<WebhookResponse>> {
   let body: string
   let signature: string | null
 
-  // 1) Read raw body and signature header
   try {
+    // Get the raw body and signature
     body = await req.text()
     signature = req.headers.get('stripe-signature')
+
     if (!signature) {
       console.error('Missing Stripe signature in webhook request')
-      return NextResponse.json({ error: 'Missing Stripe signature' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Missing Stripe signature' },
+        { status: 400 }
+      )
     }
+
     if (!process.env.STRIPE_WEBHOOK_SECRET) {
       console.error('STRIPE_WEBHOOK_SECRET not configured')
-      return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 500 })
+      return NextResponse.json(
+        { error: 'Webhook secret not configured' },
+        { status: 500 }
+      )
     }
-  } catch (err) {
-    console.error('Error reading webhook request:', err)
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+
+  } catch (error) {
+    console.error('Error reading webhook request:', error)
+    return NextResponse.json(
+      { error: 'Invalid request' },
+      { status: 400 }
+    )
   }
 
-  // 2) Verify webhook signature asynchronously
-  const stripe = getServerStripe()
+  // Verify webhook signature
   let event: Stripe.Event
+  const stripe = getServerStripe()
+
   try {
-    event = await stripe.webhooks.constructEventAsync(
+    event = stripe.webhooks.constructEvent(
       body,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET
     )
-  } catch (err) {
-    console.error('Webhook signature verification failed:', err)
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 400 })
+  } catch (error) {
+    console.error('Webhook signature verification failed:', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      signature: signature?.slice(0, 20) + '...',
+    })
+    
+    return NextResponse.json(
+      { error: 'Invalid signature' },
+      { status: 400 }
+    )
   }
 
-  // 3) Process webhook events
+  // Process webhook events
   try {
     console.log(`Processing webhook event: ${event.type} (${event.id})`)
+
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session
-        const userId = session.metadata?.userId
-        const rawIds = session.metadata?.enrollmentIds
-        if (!userId || !rawIds) {
-          console.error('Missing metadata in session:', session.id)
+        
+        // Validate required data
+        if (!session.metadata?.userId || !session.metadata?.enrollmentIds) {
+          console.error('Missing required metadata in session:', {
+            sessionId: session.id,
+            hasUserId: !!session.metadata?.userId,
+            hasEnrollmentIds: !!session.metadata?.enrollmentIds,
+          })
           break
         }
+
+        const userId = session.metadata.userId
         let enrollmentIds: string[]
-        try { enrollmentIds = JSON.parse(rawIds) } catch (parseErr) {
-          console.error('Failed to parse enrollment IDs:', parseErr)
+        
+        try {
+          enrollmentIds = JSON.parse(session.metadata.enrollmentIds)
+        } catch (parseError) {
+          console.error('Failed to parse enrollment IDs:', {
+            sessionId: session.id,
+            enrollmentIds: session.metadata.enrollmentIds,
+            error: parseError,
+          })
           break
         }
-        console.log('Payment successful - enrollment data:', { sessionId: session.id, userId, enrollmentIds })
-        // TODO: Enrollment logic
+
+        console.log('Payment successful - processing enrollment:', {
+          sessionId: session.id,
+          userId,
+          enrollmentIds,
+          amountTotal: session.amount_total,
+          currency: session.currency,
+          customerEmail: session.customer_details?.email,
+          paymentStatus: session.payment_status,
+        })
+
+        // TODO: Implement enrollment processing
+        // await processEnrollment({
+        //   userId,
+        //   enrollmentIds,
+        //   sessionId: session.id,
+        //   amountPaid: session.amount_total,
+        //   currency: session.currency,
+        //   customerEmail: session.customer_details?.email,
+        // })
+
         break
       }
-      case 'checkout.session.expired':
-        console.log('Checkout session expired:', (event.data.object as Stripe.Checkout.Session).id)
+
+      case 'checkout.session.expired': {
+        const session = event.data.object as Stripe.Checkout.Session
+        
+        console.log('Checkout session expired:', {
+          sessionId: session.id,
+          userId: session.metadata?.userId,
+          createdAt: new Date(session.created * 1000).toISOString(),
+        })
+
+        // TODO: Clean up any temporary data or send abandonment email
         break
-      case 'payment_intent.payment_failed':
-        console.log('Payment intent failed:', (event.data.object as Stripe.PaymentIntent).id)
+      }
+
+      case 'checkout.session.async_payment_succeeded': {
+        const session = event.data.object as Stripe.Checkout.Session
+        
+        console.log('Async payment succeeded:', {
+          sessionId: session.id,
+          userId: session.metadata?.userId,
+        })
+
+        // Handle delayed payment success (e.g., bank transfers)
+        // Similar processing to checkout.session.completed
         break
+      }
+
+      case 'checkout.session.async_payment_failed': {
+        const session = event.data.object as Stripe.Checkout.Session
+        
+        console.log('Async payment failed:', {
+          sessionId: session.id,
+          userId: session.metadata?.userId,
+        })
+
+        // TODO: Notify user and handle failed payment
+        break
+      }
+
+      case 'payment_intent.payment_failed': {
+        const paymentIntent = event.data.object as Stripe.PaymentIntent
+        
+        console.log('Payment failed:', {
+          paymentIntentId: paymentIntent.id,
+          userId: paymentIntent.metadata?.userId,
+          lastPaymentError: paymentIntent.last_payment_error,
+        })
+
+        // TODO: Log failure and potentially notify user
+        break
+      }
+
+      case 'invoice.payment_succeeded': {
+        // Handle successful recurring payments (if you add subscriptions later)
+        const invoice = event.data.object as Stripe.Invoice
+        console.log('Invoice payment succeeded:', invoice.id)
+        break
+      }
+
       default:
         console.log(`Unhandled event type: ${event.type}`)
     }
-    return NextResponse.json({ received: true })
-  } catch (err) {
-    console.error('Webhook processing error:', err)
-    return NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 })
+
+    return NextResponse.json({ 
+      received: true,
+      eventId: event.id,
+      eventType: event.type 
+    })
+
+  } catch (error) {
+    console.error('Webhook processing error:', {
+      eventId: event.id,
+      eventType: event.type,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+    })
+    
+    return NextResponse.json(
+      { error: 'Webhook processing failed' },
+      { status: 500 }
+    )
   }
 }
 
-// Disallow other methods
-export async function GET() {
-  return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
+// Only allow POST requests
+export async function GET(): Promise<NextResponse> {
+  return NextResponse.json(
+    { error: 'Method not allowed' },
+    { status: 405 }
+  )
 }
-export async function PUT() {
-  return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
+
+export async function PUT(): Promise<NextResponse> {
+  return NextResponse.json(
+    { error: 'Method not allowed' },
+    { status: 405 }
+  )
 }
-export async function DELETE() {
-  return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
+
+export async function DELETE(): Promise<NextResponse> {
+  return NextResponse.json(
+    { error: 'Method not allowed' },
+    { status: 405 }
+  )
 }
