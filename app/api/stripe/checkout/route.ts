@@ -3,6 +3,7 @@ import { auth } from '@clerk/nextjs/server'
 import { getServerStripe } from '@/lib/stripe/config'
 import { coursesData } from '@/lib/data/courses'
 import { z } from 'zod'
+import Stripe from 'stripe'
 
 // Input validation schema
 const CheckoutItemSchema = z.object({
@@ -51,23 +52,23 @@ export async function POST(req: NextRequest) {
 
       const plan = course.plans.find(p => p.label === item.planLabel)
       if (!plan) {
-        return NextResponse.json({ error: `Plan \"${item.planLabel}\" not found for course \"${item.courseName}\"` }, { status: 400 })
+        return NextResponse.json({ error: `Plan "${item.planLabel}" not found for course "${item.courseName}"` }, { status: 400 })
       }
 
       if (plan.price !== item.price) {
         return NextResponse.json({
-          error: `Price mismatch for \"${item.courseName}\". Expected: ${plan.price}, Received: ${item.price}`
+          error: `Price mismatch for "${item.courseName}". Expected: ${plan.price}, Received: ${item.price}`
         }, { status: 400 })
       }
 
       if (plan.enrollment_id !== item.enrollmentId) {
-        return NextResponse.json({ error: `Enrollment ID mismatch for \"${item.courseName}\"` }, { status: 400 })
+        return NextResponse.json({ error: `Enrollment ID mismatch for "${item.courseName}"` }, { status: 400 })
       }
 
       enrollmentIds.push(plan.enrollment_id)
       if (plan.price > 0) {
         if (!plan.stripe_price_id.startsWith('price_')) {
-          return NextResponse.json({ error: `Invalid Stripe price ID format for \"${item.courseName}\". Must start with \"price_\"` }, { status: 400 })
+          return NextResponse.json({ error: `Invalid Stripe price ID format for "${item.courseName}". Must start with "price_"` }, { status: 400 })
         }
         lineItems.push({ price: plan.stripe_price_id, quantity: 1 })
       }
@@ -98,11 +99,12 @@ export async function POST(req: NextRequest) {
     })
 
     return NextResponse.json({ sessionId: session.id, isFree: false, url: session.url })
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Checkout API error:', error)
-    if (error instanceof Error && 'type' in error) {
-      const stripeError = error as any
-      switch (stripeError.type) {
+
+    // Use Stripe.errors.StripeError per stripe-node typings workaround
+    if (error instanceof Stripe.errors.StripeError) {
+      switch (error.type) {
         case 'StripeCardError':
           return NextResponse.json({ error: 'Payment failed. Please check your card details.' }, { status: 400 })
         case 'StripeRateLimitError':
@@ -112,10 +114,10 @@ export async function POST(req: NextRequest) {
         case 'StripeAPIError':
         case 'StripeConnectionError':
           return NextResponse.json({ error: 'Payment service temporarily unavailable. Please try again.' }, { status: 503 })
-        default:
-          break
       }
     }
+
+    // Fallback for any other error
     return NextResponse.json({ error: 'An unexpected error occurred. Please try again.' }, { status: 500 })
   }
 }
