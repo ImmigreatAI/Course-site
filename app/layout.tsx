@@ -40,7 +40,7 @@ export default function RootLayout({
             position="top-right"
             toastOptions={{
               className: 'backdrop-blur-md bg-white/90 border-purple-100',
-              duration: 3000,
+              duration: 1500,
             }}
             richColors
           />

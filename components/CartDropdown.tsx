@@ -18,8 +18,7 @@ interface CartDropdownProps {
 
 interface CheckoutResponse {
   sessionId?: string
-  isFree: boolean
-  url?: string
+  url?: string | null
   enrollmentIds?: string[]
   message?: string
   error?: string
@@ -95,7 +94,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
     setIsLoading(true)
 
     try {
-      // Call checkout API
+      // Call checkout API - all courses (free and paid) go through Stripe
       const response = await fetch('/api/stripe/checkout', {
         method: 'POST',
         headers: {
@@ -111,16 +110,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
 
       const data: CheckoutResponse = await response.json()
 
-      // Handle free enrollment
-      if (data.isFree) {
-        toast.success(data.message || 'Free courses enrolled successfully!')
-        clearCart()
-        onClose()
-        router.push('/my-courses')
-        return
-      }
-
-      // Redirect to Stripe Checkout
+      // All courses now go through Stripe checkout (including free ones)
       if (!data.sessionId) {
         throw new Error('No checkout session created')
       }
@@ -132,6 +122,13 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
 
       // Close dropdown before redirect
       onClose()
+
+      // Show loading toast for better UX
+      if (subtotal === 0) {
+        toast.loading('Processing free enrollment...', { duration: 3000 })
+      } else {
+        toast.loading('Redirecting to payment...', { duration: 3000 })
+      }
 
       const { error } = await stripe.redirectToCheckout({
         sessionId: data.sessionId,
@@ -237,7 +234,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
                         {item.planLabel === '6mo' ? '6 months' : '7 days'}
                       </Badge>
                       <span className="text-sm font-semibold text-purple-700">
-                        {item.price === 0 ? 'Free' : `$${item.price}`}
+                        {item.price === 0 ? 'Free' : `${item.price}`}
                       </span>
                     </div>
                   </div>
@@ -272,10 +269,20 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
               </div>
             )}
             
+            {/* Free course notice */}
+            {subtotal === 0 && (
+              <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-xl">
+                <AlertCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+                <p className="text-xs text-green-800">
+                  Free courses still require checkout for enrollment
+                </p>
+              </div>
+            )}
+            
             <div className="flex justify-between items-center">
-              <span className="font-semibold text-gray-900">Subtotal:</span>
+              <span className="font-semibold text-gray-900">Total:</span>
               <span className="text-xl font-bold text-purple-700">
-                {subtotal === 0 ? 'Free' : `$${subtotal}`}
+                {subtotal === 0 ? 'Free' : `${subtotal}`}
               </span>
             </div>
             
@@ -296,7 +303,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
                 </>
               ) : (
                 <>
-                  {subtotal === 0 ? 'Enroll Free' : 'Proceed to Checkout'}
+                  {subtotal === 0 ? 'Enroll for Free' : 'Proceed to Checkout'}
                   {!isLoaded && ' (Loading...)'}
                 </>
               )}

@@ -13,6 +13,326 @@ interface WebhookResponse {
   error?: string
 }
 
+// LearnWorlds API configuration
+const LEARNWORLDS_API_URL = process.env.LEARNWORLDS_API_URL || 'https://courses.getgreencardonyourown.com/admin/api/v2'
+const LEARNWORLDS_AUTH_HEADER = `Bearer ${process.env.LEARNWORLDS_AUTH_TOKEN || ''}`
+const LEARNWORLDS_CLIENT_HEADER = process.env.LEARNWORLDS_CLIENT_TOKEN || ''
+
+interface LearnWorldsUser {
+  id?: string
+  email: string
+  username: string
+}
+
+interface EnrollmentData {
+  productId: string
+  productType: 'course' | 'bundle'
+  justification: string
+  price: number
+  send_enrollment_email: boolean
+}
+
+// Check if user exists in LearnWorlds
+async function checkUserExists(email: string): Promise<LearnWorldsUser | null> {
+  try {
+    const url = `${LEARNWORLDS_API_URL}/users/${encodeURIComponent(email)}`
+    
+    console.log('Checking user existence:', { 
+      url, 
+      email,
+      authHeader: LEARNWORLDS_AUTH_HEADER ? LEARNWORLDS_AUTH_HEADER.substring(0, 20) + '...' : 'missing',
+      clientHeader: LEARNWORLDS_CLIENT_HEADER ? LEARNWORLDS_CLIENT_HEADER.substring(0, 20) + '...' : 'missing'
+    })
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': LEARNWORLDS_AUTH_HEADER,
+        'Lw-Client': LEARNWORLDS_CLIENT_HEADER,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    })
+
+    console.log('User check response:', {
+      status: response.status,
+      statusText: response.statusText,
+      contentType: response.headers.get('content-type'),
+      headers: Object.fromEntries(response.headers.entries())
+    })
+
+    const responseText = await response.text()
+    console.log('Raw response text length:', responseText.length)
+    console.log('Raw response text (first 500 chars):', responseText.substring(0, 500))
+    
+    if (response.status === 200) {
+      if (!responseText.trim()) {
+        console.log('Empty 200 response - API authentication or endpoint issue')
+        throw new Error('Empty response from LearnWorlds API - check authentication credentials')
+      }
+      
+      // Check if response is HTML (authentication error page)
+      if (responseText.includes('<html>') || responseText.includes('<!DOCTYPE')) {
+        console.error('Received HTML response instead of JSON - likely authentication issue')
+        throw new Error('Authentication failed - received HTML page instead of JSON')
+      }
+      
+      try {
+        const userData = JSON.parse(responseText)
+        console.log('User found in LearnWorlds:', { email, userId: userData.id })
+        return userData
+      } catch (parseError) {
+        console.error('Failed to parse user response:', { responseText, parseError })
+        throw new Error(`Invalid JSON response: ${responseText.substring(0, 200)}`)
+      }
+    } else if (response.status === 404) {
+      console.log('User not found in LearnWorlds (404):', email)
+      return null
+    } else if (response.status === 401 || response.status === 403) {
+      console.error('Authentication failed:', {
+        status: response.status,
+        statusText: response.statusText,
+        responseText: responseText.substring(0, 200)
+      })
+      throw new Error(`Authentication failed: ${response.status} - Check your LearnWorlds API credentials`)
+    } else {
+      console.error('API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        responseText: responseText.substring(0, 200)
+      })
+      throw new Error(`API error: ${response.status} - ${response.statusText}`)
+    }
+  } catch (error) {
+    console.error('Error in checkUserExists:', error)
+    throw error
+  }
+}
+
+// Create new user in LearnWorlds
+async function createUser(email: string, username: string): Promise<LearnWorldsUser> {
+  try {
+    const url = `${LEARNWORLDS_API_URL}/users`
+    
+    const requestBody = {
+      email: email,
+      username: username
+    }
+    
+    console.log('Creating user:', { 
+      url, 
+      email, 
+      username,
+      requestBody
+    })
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': LEARNWORLDS_AUTH_HEADER,
+        'Lw-Client': LEARNWORLDS_CLIENT_HEADER,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(requestBody)
+    })
+
+    console.log('User creation response:', {
+      status: response.status,
+      statusText: response.statusText,
+      contentType: response.headers.get('content-type'),
+      headers: Object.fromEntries(response.headers.entries())
+    })
+
+    const responseText = await response.text()
+    console.log('Raw creation response length:', responseText.length)
+    console.log('Raw creation response (first 500 chars):', responseText.substring(0, 500))
+
+    if (response.status === 200 || response.status === 201) {
+      if (!responseText.trim()) {
+        console.error('Empty response from user creation API - authentication issue')
+        throw new Error('Empty response from LearnWorlds user creation API - check authentication')
+      }
+      
+      // Check if response is HTML (authentication error page)
+      if (responseText.includes('<html>') || responseText.includes('<!DOCTYPE')) {
+        console.error('Received HTML response instead of JSON during user creation')
+        throw new Error('User creation failed - received HTML page instead of JSON (auth issue)')
+      }
+      
+      try {
+        const userData = JSON.parse(responseText)
+        console.log('User created in LearnWorlds:', { email, userId: userData.id })
+        return userData
+      } catch (parseError) {
+        console.error('Failed to parse user creation response:', { responseText, parseError })
+        throw new Error(`Invalid JSON response from user creation: ${responseText.substring(0, 200)}`)
+      }
+    } else if (response.status === 401 || response.status === 403) {
+      console.error('Authentication failed during user creation:', {
+        status: response.status,
+        statusText: response.statusText,
+        responseText: responseText.substring(0, 200)
+      })
+      throw new Error(`User creation authentication failed: ${response.status} - Check API credentials`)
+    } else {
+      console.error('User creation API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        responseText: responseText.substring(0, 200)
+      })
+      throw new Error(`Failed to create user: ${response.status} - ${response.statusText}`)
+    }
+  } catch (error) {
+    console.error('Error in createUser:', error)
+    throw error
+  }
+}
+
+// Enroll user in course/bundle
+async function enrollUser(
+  email: string, 
+  enrollmentData: EnrollmentData
+): Promise<boolean> {
+  try {
+    const url = `${LEARNWORLDS_API_URL}/users/${encodeURIComponent(email)}/enrollment`
+    
+    console.log('Enrolling user:', { 
+      url, 
+      email, 
+      productId: enrollmentData.productId,
+      productType: enrollmentData.productType
+    })
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': LEARNWORLDS_AUTH_HEADER,
+        'Lw-Client': LEARNWORLDS_CLIENT_HEADER,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(enrollmentData)
+    })
+
+    console.log('Enrollment response:', {
+      status: response.status,
+      statusText: response.statusText,
+      contentType: response.headers.get('content-type')
+    })
+
+    if (response.ok) {
+      const responseText = await response.text()
+      console.log('Raw enrollment response:', responseText)
+      
+      if (!responseText.trim()) {
+        console.log('Empty enrollment response - assuming success')
+        return true
+      }
+      
+      try {
+        const result = JSON.parse(responseText)
+        console.log('Enrollment successful:', {
+          email,
+          productId: enrollmentData.productId,
+          productType: enrollmentData.productType,
+          success: result.success
+        })
+        return result.success === true
+      } catch (parseError) {
+        console.log('Could not parse enrollment response, but got 200 status - assuming success')
+        return true
+      }
+    } else {
+      const errorText = await response.text().catch(() => 'Unable to read error response')
+      console.error('Error enrolling user:', {
+        status: response.status,
+        statusText: response.statusText,
+        errorText,
+        email,
+        enrollmentData
+      })
+      throw new Error(`Failed to enroll user: ${response.status} - ${errorText}`)
+    }
+  } catch (error) {
+    console.error('Error in enrollUser:', error)
+    throw error
+  }
+}
+
+// Complete enrollment process
+async function processEnrollment(session: Stripe.Checkout.Session): Promise<void> {
+  const userEmail = session.metadata?.userEmail
+  const userName = session.metadata?.userName || 'User'
+  const enrollmentIds = session.metadata?.enrollmentIds
+  const courseCategories = session.metadata?.courseCategories
+
+  if (!userEmail || !enrollmentIds) {
+    throw new Error('Missing required enrollment data')
+  }
+
+  let parsedEnrollmentIds: string[]
+  let parsedCategories: string[]
+
+  try {
+    parsedEnrollmentIds = JSON.parse(enrollmentIds)
+    parsedCategories = JSON.parse(courseCategories || '[]')
+  } catch (error) {
+    throw new Error('Failed to parse enrollment data')
+  }
+
+  // Step 1: Check if user exists, create if not
+  let user = await checkUserExists(userEmail)
+  if (!user) {
+    user = await createUser(userEmail, userName)
+  }
+
+  // Step 2: Enroll in all courses/bundles
+  const enrollmentPromises = parsedEnrollmentIds.map(async (enrollmentId, index) => {
+    const category = parsedCategories[index] || 'course'
+    const productType = category === 'bundle' ? 'bundle' : 'course'
+    
+    const enrollmentData: EnrollmentData = {
+      productId: enrollmentId,
+      productType: productType,
+      justification: 'Added by admin - Stripe payment completed',
+      price: session.amount_total ? session.amount_total / 100 : 0, // Convert from cents
+      send_enrollment_email: true
+    }
+
+    return enrollUser(userEmail, enrollmentData)
+  })
+
+  // Wait for all enrollments to complete
+  const enrollmentResults = await Promise.allSettled(enrollmentPromises)
+  
+  // Log results
+  const successCount = enrollmentResults.filter(result => 
+    result.status === 'fulfilled' && result.value === true
+  ).length
+
+  const failureCount = enrollmentResults.length - successCount
+
+  console.log('Enrollment process completed:', {
+    sessionId: session.id,
+    userEmail,
+    totalCourses: parsedEnrollmentIds.length,
+    successful: successCount,
+    failed: failureCount
+  })
+
+  // Log any failures
+  enrollmentResults.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      console.error(`Enrollment failed for ${parsedEnrollmentIds[index]}:`, result.reason)
+    }
+  })
+
+  if (failureCount > 0) {
+    throw new Error(`${failureCount} out of ${enrollmentResults.length} enrollments failed`)
+  }
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse<WebhookResponse>> {
   let body: string
   let signature: string | null
@@ -34,6 +354,15 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
       console.error('STRIPE_WEBHOOK_SECRET not configured')
       return NextResponse.json(
         { error: 'Webhook secret not configured' },
+        { status: 500 }
+      )
+    }
+
+    // Check LearnWorlds API configuration
+    if (!LEARNWORLDS_AUTH_HEADER || !LEARNWORLDS_CLIENT_HEADER) {
+      console.error('LearnWorlds API credentials not configured')
+      return NextResponse.json(
+        { error: 'LearnWorlds API not configured' },
         { status: 500 }
       )
     }
@@ -77,48 +406,34 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
         const session = event.data.object as Stripe.Checkout.Session
         
         // Validate required data
-        if (!session.metadata?.userId || !session.metadata?.enrollmentIds) {
+        if (!session.metadata?.userEmail || !session.metadata?.enrollmentIds) {
           console.error('Missing required metadata in session:', {
             sessionId: session.id,
-            hasUserId: !!session.metadata?.userId,
+            hasUserEmail: !!session.metadata?.userEmail,
             hasEnrollmentIds: !!session.metadata?.enrollmentIds,
-          })
-          break
-        }
-
-        const userId = session.metadata.userId
-        let enrollmentIds: string[]
-        
-        try {
-          enrollmentIds = JSON.parse(session.metadata.enrollmentIds)
-        } catch (parseError) {
-          console.error('Failed to parse enrollment IDs:', {
-            sessionId: session.id,
-            enrollmentIds: session.metadata.enrollmentIds,
-            error: parseError,
           })
           break
         }
 
         console.log('Payment successful - processing enrollment:', {
           sessionId: session.id,
-          userId,
-          enrollmentIds,
+          userEmail: session.metadata.userEmail,
+          userName: session.metadata.userName,
           amountTotal: session.amount_total,
           currency: session.currency,
-          customerEmail: session.customer_details?.email,
           paymentStatus: session.payment_status,
         })
 
-        // TODO: Implement enrollment processing
-        // await processEnrollment({
-        //   userId,
-        //   enrollmentIds,
-        //   sessionId: session.id,
-        //   amountPaid: session.amount_total,
-        //   currency: session.currency,
-        //   customerEmail: session.customer_details?.email,
-        // })
+        try {
+          await processEnrollment(session)
+          console.log('Enrollment process completed successfully')
+        } catch (enrollmentError) {
+          console.error('Enrollment process failed:', {
+            sessionId: session.id,
+            error: enrollmentError instanceof Error ? enrollmentError.message : 'Unknown error'
+          })
+          // Don't fail the webhook - log the error for manual review
+        }
 
         break
       }
@@ -128,7 +443,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
         
         console.log('Checkout session expired:', {
           sessionId: session.id,
-          userId: session.metadata?.userId,
+          userEmail: session.metadata?.userEmail,
           createdAt: new Date(session.created * 1000).toISOString(),
         })
 
@@ -141,11 +456,16 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
         
         console.log('Async payment succeeded:', {
           sessionId: session.id,
-          userId: session.metadata?.userId,
+          userEmail: session.metadata?.userEmail,
         })
 
         // Handle delayed payment success (e.g., bank transfers)
-        // Similar processing to checkout.session.completed
+        try {
+          await processEnrollment(session)
+          console.log('Async enrollment process completed successfully')
+        } catch (enrollmentError) {
+          console.error('Async enrollment process failed:', enrollmentError)
+        }
         break
       }
 
@@ -154,7 +474,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
         
         console.log('Async payment failed:', {
           sessionId: session.id,
-          userId: session.metadata?.userId,
+          userEmail: session.metadata?.userEmail,
         })
 
         // TODO: Notify user and handle failed payment
@@ -166,7 +486,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
         
         console.log('Payment failed:', {
           paymentIntentId: paymentIntent.id,
-          userId: paymentIntent.metadata?.userId,
+          userEmail: paymentIntent.metadata?.userEmail,
           lastPaymentError: paymentIntent.last_payment_error,
         })
 
