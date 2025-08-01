@@ -1,62 +1,78 @@
+// components/CourseCard.tsx
 'use client'
 
 import { useState } from 'react'
-import { ShoppingCart, CreditCard, Package, Clock, Sparkles } from 'lucide-react'
-import { useCartStore } from '@/lib/store/cart-store'
-import { CourseData } from '@/lib/data/courses'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { ShoppingCart, Check, Package, BookOpen, Clock, Sparkles } from 'lucide-react'
+import { useCartStore } from '@/lib/store/cart-store'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import type { CourseData } from '@/lib/data/courses'
 
 interface CourseCardProps {
   course: CourseData
 }
 
 export function CourseCard({ course }: CourseCardProps) {
-  const [selectedPlan, setSelectedPlan] = useState<string>(course.plans[0].label)
-  const { addItem, isItemInCart, canAddToCart } = useCartStore()
+  const { addItem, items, isHydrated } = useCartStore()
+  const [selectedPlan, setSelectedPlan] = useState(course.plans[0])
+  const [isLoading, setIsLoading] = useState(false)
+
+  // Check if this course is in cart (any plan)
+  const isInCart = items.some(item => item.courseId === course.course.Unique_id)
   
-  const courseInfo = course.course
-  const isBundle = course.plans[0].category === 'bundle'
+  // Get the specific plan in cart if any
+  const cartItem = items.find(item => item.courseId === course.course.Unique_id)
   
-  // Get the currently selected plan data
-  const currentPlan = course.plans.find(plan => plan.label === selectedPlan) || course.plans[0]
-  
-  const handleAddToCart = () => {
-    const { canAdd, reason } = canAddToCart(
-      courseInfo.Unique_id,
-      currentPlan.enrollment_id,
-      courseInfo.package
-    )
+  // Check if current course is a bundle
+  const isBundle = course.plans.some(plan => plan.category === 'bundle')
+  const bundleContents = course.course.package || []
+
+  if (!selectedPlan) {
+    return null
+  }
+
+  const handleAddToCart = async () => {
+    if (!selectedPlan) return
     
-    if (!canAdd) {
-      toast.error(reason || 'Cannot add this item to cart')
-      return
+    setIsLoading(true)
+    
+    try {
+      const cartItem = {
+        courseId: course.course.Unique_id,
+        courseName: course.course.name,
+        planLabel: selectedPlan.label,
+        price: selectedPlan.price,
+        enrollmentId: selectedPlan.enrollment_id,
+        stripePriceId: selectedPlan.stripe_price_id,
+      }
+
+      const result = addItem(cartItem)
+      
+      if (result.success) {
+        toast.success(result.message)
+      } else {
+        // Show detailed error message for conflicts
+        if (result.conflictingItems && result.conflictingItems.length > 0) {
+          toast.error(result.message, {
+            duration: 6000, // Longer duration for complex messages
+          })
+        } else {
+          toast.error(result.message)
+        }
+      }
+    } catch (error) {
+      console.error('Error adding to cart:', error)
+      toast.error('Failed to add item to cart')
+    } finally {
+      setIsLoading(false)
     }
-    
-    addItem({
-      courseId: courseInfo.Unique_id,
-      courseName: courseInfo.name,
-      planLabel: currentPlan.label,
-      price: currentPlan.price,
-      enrollmentId: currentPlan.enrollment_id,
-      stripePriceId: currentPlan.stripe_price_id, // Now guaranteed to be non-null
-    })
-    
-    toast.success('Added to cart successfully!')
   }
-  
-  const handleBuyNow = () => {
-    handleAddToCart()
-    // TODO: Redirect to checkout
-  }
-  
-  // Check if ANY plan of this course is in cart
-  const isInCart = course.plans.some(plan => 
-    isItemInCart(courseInfo.Unique_id, plan.label)
-  )
-  
+
+  // Calculate bundle savings (simplified calculation)
+  const bundleSavings = isBundle && bundleContents.length > 0 ? bundleContents.length * 50 : 0
+
   return (
     <div className="group relative h-full">
       {/* Premium gradient background effect */}
@@ -68,22 +84,30 @@ export function CourseCard({ course }: CourseCardProps) {
         <div className="p-6 pb-4">
           <div className="flex items-start justify-between gap-3 mb-3">
             <h3 className="text-xl font-bold text-gray-900 leading-tight line-clamp-2 min-h-[3.5rem]">
-              {courseInfo.name}
+              {course.course.name}
             </h3>
             <div className="flex flex-col gap-2 items-end flex-shrink-0">
-              {isBundle && (
-                <Badge className="bg-gradient-to-r from-purple-500 to-pink-500 text-white border-0 shadow-md">
+              {/* Bundle/Course Badge */}
+              {isBundle ? (
+                <Badge className="bg-gradient-to-r from-orange-500 to-red-500 text-white border-0 shadow-md">
                   <Package className="w-3 h-3 mr-1" />
                   Bundle
                 </Badge>
+              ) : (
+                <Badge variant="outline" className="bg-white/80 backdrop-blur-sm border-blue-300 text-blue-700">
+                  <BookOpen className="w-3 h-3 mr-1" />
+                  Course
+                </Badge>
               )}
-              {currentPlan.type === 'paid' && (
+              
+              {/* Premium/Free Badge */}
+              {selectedPlan.type === 'paid' && (
                 <Badge className="bg-black text-white border-0 shadow-md">
                   <Sparkles className="w-3 h-3 mr-1" />
                   Premium
                 </Badge>
               )}
-              {currentPlan.type === 'free' && (
+              {selectedPlan.type === 'free' && (
                 <Badge variant="outline" className="border-green-500 text-green-700 bg-green-50/50">
                   Free
                 </Badge>
@@ -92,8 +116,22 @@ export function CourseCard({ course }: CourseCardProps) {
           </div>
           
           <p className="text-sm text-gray-600 line-clamp-3 min-h-[3.75rem]">
-            {courseInfo.description}
+            {course.course.description}
           </p>
+
+          {/* Bundle Info */}
+          {isBundle && bundleContents.length > 0 && (
+            <div className="mt-3 p-3 bg-orange-50/80 border border-orange-200/50 rounded-xl">
+              <p className="text-xs text-orange-800">
+                <strong>This bundle includes {bundleContents.length} courses</strong>
+                {bundleSavings > 0 && (
+                  <span className="block mt-1 font-medium text-green-700">
+                    💰 Save ${bundleSavings} vs individual purchase
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
         </div>
         
         {/* Pricing Options Section - Flexible but contained */}
@@ -104,10 +142,10 @@ export function CourseCard({ course }: CourseCardProps) {
               {course.plans.map((plan) => (
                 <button
                   key={plan.label}
-                  onClick={() => setSelectedPlan(plan.label)}
+                  onClick={() => setSelectedPlan(plan)}
                   className={cn(
                     "flex-1 py-2.5 px-4 rounded-xl font-medium text-sm transition-all duration-300",
-                    selectedPlan === plan.label
+                    selectedPlan?.label === plan.label
                       ? "bg-gradient-to-r from-purple-100 to-pink-100 text-purple-900 shadow-md border border-purple-200/50"
                       : "bg-gray-50/50 text-gray-600 hover:bg-gray-100/70 border border-gray-200/30"
                   )}
@@ -125,23 +163,23 @@ export function CourseCard({ course }: CourseCardProps) {
                 <div className="flex items-center gap-2 text-gray-600 mb-1">
                   <Clock className="w-4 h-4" />
                   <span className="text-sm">
-                    {currentPlan.label === '6mo' ? '6 months access' : '7 days access'}
+                    {selectedPlan.label === '6mo' ? '6 months access' : '7 days access'}
                   </span>
                 </div>
                 <div className="flex items-baseline gap-1">
                   <span className="text-3xl font-bold text-gray-900">
-                    {currentPlan.price === 0 ? 'Free' : `$${currentPlan.price}`}
+                    {selectedPlan.price === 0 ? 'Free' : `$${selectedPlan.price}`}
                   </span>
-                  {currentPlan.label === '7day' && currentPlan.price > 0 && (
+                  {selectedPlan.label === '7day' && selectedPlan.price > 0 && (
                     <span className="text-sm text-purple-600 font-medium">trial</span>
                   )}
                 </div>
               </div>
-              {isBundle && (
+              {isBundle && bundleSavings > 0 && (
                 <div className="text-right">
                   <p className="text-xs text-gray-500">You save</p>
                   <p className="text-lg font-bold text-green-600">
-                    ${(199 * 2) - currentPlan.price}
+                    ${bundleSavings}
                   </p>
                 </div>
               )}
@@ -154,24 +192,30 @@ export function CourseCard({ course }: CourseCardProps) {
           <div className="flex gap-3">
             <Button
               onClick={handleAddToCart}
-              disabled={isInCart}
-              variant="outline"
+              disabled={isLoading || !isHydrated}
               className={cn(
                 "flex-1 h-11 rounded-xl font-medium transition-all duration-300",
-                isInCart
-                  ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
-                  : "border-purple-300 text-purple-700 hover:bg-purple-50 hover:border-purple-400 hover:scale-105"
+                isInCart && cartItem?.planLabel === selectedPlan.label
+                  ? "bg-green-600 hover:bg-green-700 text-white"
+                  : "bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white hover:scale-105"
               )}
             >
-              <ShoppingCart className="w-4 h-4 mr-2" />
-              {isInCart ? 'Added' : 'Add to Cart'}
-            </Button>
-            <Button
-              onClick={handleBuyNow}
-              className="flex-1 h-11 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl font-medium shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
-            >
-              <CreditCard className="w-4 h-4 mr-2" />
-              {currentPlan.price === 0 ? 'Enroll Free' : 'Buy Now'}
+              {isLoading ? (
+                <div className="flex items-center">
+                  <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Adding...
+                </div>
+              ) : isInCart && cartItem?.planLabel === selectedPlan.label ? (
+                <>
+                  <Check className="w-4 h-4 mr-2" />
+                  Added
+                </>
+              ) : (
+                <>
+                  <ShoppingCart className="w-4 h-4 mr-2" />
+                  Add to Cart
+                </>
+              )}
             </Button>
           </div>
         </div>

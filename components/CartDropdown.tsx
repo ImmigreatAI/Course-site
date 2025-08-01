@@ -1,7 +1,8 @@
+// components/CartDropdown.tsx
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ShoppingCart, Trash2, X, Loader2, AlertCircle } from 'lucide-react'
+import { ShoppingCart, Trash2, X, Loader2, AlertCircle, Package, BookOpen } from 'lucide-react'
 import { useCartStore } from '@/lib/store/cart-store'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -10,6 +11,7 @@ import { useUser } from '@clerk/nextjs'
 import { getStripe } from '@/lib/stripe/config'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { coursesData } from '@/lib/data/courses'
 
 interface CartDropdownProps {
   isOpen: boolean
@@ -31,6 +33,12 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
   const { items, removeItem, getSubtotal, clearCart } = useCartStore()
   const subtotal = getSubtotal()
   const [isLoading, setIsLoading] = useState(false)
+  
+  // Helper function to check if item is a bundle
+  const isItemBundle = (courseId: string): boolean => {
+    const courseData = coursesData.find(course => course.course.Unique_id === courseId)
+    return courseData?.plans.some(plan => plan.category === 'bundle') || false
+  }
   
   // Handle clicks outside
   useEffect(() => {
@@ -220,38 +228,56 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
             </div>
           ) : (
             <div className="p-2 space-y-2">
-              {items.map((item) => (
-                <div 
-                  key={`${item.courseId}-${item.planLabel}`}
-                  className="flex items-start p-3 rounded-xl hover:bg-purple-50/50 transition-all duration-200 group"
-                >
-                  <div className="flex-1 min-w-0 mr-2">
-                    <p className="font-medium text-sm text-gray-900 line-clamp-2">
-                      {item.courseName}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Badge variant="outline" className="text-xs bg-purple-50/50">
-                        {item.planLabel === '6mo' ? '6 months' : '7 days'}
-                      </Badge>
-                      <span className="text-sm font-semibold text-purple-700">
-                        {item.price === 0 ? 'Free' : `${item.price}`}
-                      </span>
-                    </div>
-                  </div>
-                  <Button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleRemoveItem(item.courseId)
-                    }}
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 hover:bg-red-50 text-red-400 hover:text-red-600 flex-shrink-0 transition-all duration-200"
-                    disabled={isLoading}
+              {items.map((item) => {
+                const isBundleItem = isItemBundle(item.courseId)
+                
+                return (
+                  <div 
+                    key={`${item.courseId}-${item.planLabel}`}
+                    className="flex items-start p-3 rounded-xl hover:bg-purple-50/50 transition-all duration-200 group"
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
+                    <div className="flex-1 min-w-0 mr-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="font-medium text-sm text-gray-900 line-clamp-2">
+                          {item.courseName}
+                        </p>
+                        {/* Bundle/Course indicator */}
+                        {isBundleItem ? (
+                          <Badge className="bg-gradient-to-r from-orange-500 to-red-500 text-white text-xs">
+                            <Package className="w-3 h-3 mr-1" />
+                            Bundle
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-white/80 backdrop-blur-sm border-blue-300 text-blue-700 text-xs">
+                            <BookOpen className="w-3 h-3 mr-1" />
+                            Course
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs bg-purple-50/50">
+                          {item.planLabel === '6mo' ? '6 months' : '7 days'}
+                        </Badge>
+                        <span className="text-sm font-semibold text-purple-700">
+                          {item.price === 0 ? 'Free' : `$${item.price}`}
+                        </span>
+                      </div>
+                    </div>
+                    <Button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleRemoveItem(item.courseId)
+                      }}
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 hover:bg-red-50 text-red-400 hover:text-red-600 flex-shrink-0 transition-all duration-200"
+                      disabled={isLoading}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
@@ -282,7 +308,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
             <div className="flex justify-between items-center">
               <span className="font-semibold text-gray-900">Total:</span>
               <span className="text-xl font-bold text-purple-700">
-                {subtotal === 0 ? 'Free' : `${subtotal}`}
+                {subtotal === 0 ? 'Free' : `$${subtotal}`}
               </span>
             </div>
             

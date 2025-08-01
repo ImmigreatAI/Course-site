@@ -4,12 +4,14 @@ import { useCartStore } from '@/lib/store/cart-store'
 
 export function useCartHydration() {
   const [isHydrated, setIsHydrated] = useState(false)
+  const storeHydrated = useCartStore((state) => state.isHydrated)
+  const setStoreHydrated = useCartStore((state) => state.setHydrated)
 
   useEffect(() => {
-    // Manually trigger hydration only on client side
-    useCartStore.persist.rehydrate()
+    // Trigger hydration on mount
+    setStoreHydrated()
     setIsHydrated(true)
-  }, [])
+  }, [setStoreHydrated])
 
-  return isHydrated
+  return storeHydrated && isHydrated
 }

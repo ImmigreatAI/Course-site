@@ -78,10 +78,23 @@ export async function POST(req: NextRequest): Promise<NextResponse<CheckoutRespo
     const lineItems: Array<{ price: string; quantity: number }> = []
     const enrollmentIds: string[] = []
 
+    console.log('🔍 Processing cart items:', {
+      totalItems: items.length,
+      items: items.map((item, i) => ({
+        index: i,
+        courseId: item.courseId,
+        courseName: item.courseName,
+        planLabel: item.planLabel,
+        price: item.price,
+        enrollmentId: item.enrollmentId
+      }))
+    })
+
     // Validate each item against course data
     for (const item of items) {
       const course = coursesData.find(c => c.course.Unique_id === item.courseId)
       if (!course) {
+        console.log('❌ Course not found in data:', { courseId: item.courseId, availableCourses: coursesData.map(c => c.course.Unique_id) })
         return NextResponse.json(
           { 
             error: `Course not found: ${item.courseId}`, 
@@ -90,15 +103,31 @@ export async function POST(req: NextRequest): Promise<NextResponse<CheckoutRespo
         )
       }
 
+      console.log('✅ Course found:', {
+        courseId: item.courseId,
+        courseName: course.course.name,
+        availablePlans: course.plans.map(p => ({ label: p.label, price: p.price, enrollmentId: p.enrollment_id }))
+      })
+
       const plan = course.plans.find(p => p.label === item.planLabel)
       if (!plan) {
+        console.log('❌ Plan not found:', { planLabel: item.planLabel, availablePlans: course.plans.map(p => p.label) })
         return NextResponse.json({
           error: `Plan "${item.planLabel}" not found for course "${item.courseName}"`,
         }, { status: 400 })
       }
 
+      console.log('✅ Plan found:', {
+        planLabel: item.planLabel,
+        planPrice: plan.price,
+        planEnrollmentId: plan.enrollment_id,
+        itemPrice: item.price,
+        itemEnrollmentId: item.enrollmentId
+      })
+
       // Validate price matches exactly
       if (plan.price !== item.price) {
+        console.log('❌ Price mismatch:', { planPrice: plan.price, itemPrice: item.price })
         return NextResponse.json({
           error: `Price mismatch for "${item.courseName}". Expected: ${plan.price}, Received: ${item.price}`,
         }, { status: 400 })
@@ -106,6 +135,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<CheckoutRespo
 
       // Validate enrollment ID matches
       if (plan.enrollment_id !== item.enrollmentId) {
+        console.log('❌ Enrollment ID mismatch:', { planEnrollmentId: plan.enrollment_id, itemEnrollmentId: item.enrollmentId })
         return NextResponse.json({
           error: `Enrollment ID mismatch for "${item.courseName}"`,
         }, { status: 400 })
@@ -119,6 +149,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<CheckoutRespo
         // For free courses, we still need a valid Stripe price ID for $0
         // Make sure you have created $0 price IDs in Stripe dashboard
         if (!plan.stripe_price_id.startsWith('price_')) {
+          console.log('❌ Invalid Stripe price ID format for free course')
           return NextResponse.json({
             error: `Invalid Stripe price ID format for free course "${item.courseName}". Must start with "price_"`,
           }, { status: 400 })
@@ -126,6 +157,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<CheckoutRespo
       } else {
         // Validate stripe_price_id format for paid courses
         if (!plan.stripe_price_id.startsWith('price_')) {
+          console.log('❌ Invalid Stripe price ID format for paid course')
           return NextResponse.json({
             error: `Invalid Stripe price ID format for "${item.courseName}". Must start with "price_"`,
           }, { status: 400 })
@@ -136,10 +168,33 @@ export async function POST(req: NextRequest): Promise<NextResponse<CheckoutRespo
         price: plan.stripe_price_id,
         quantity: 1,
       })
+
+      console.log('✅ Item processed successfully:', {
+        courseId: item.courseId,
+        courseName: course.course.name, // Use actual course name from data
+        planLabel: item.planLabel,
+        price: plan.price, // Use actual price from data
+        enrollmentId: plan.enrollment_id
+      })
     }
 
     // Create Stripe checkout session for all items (free and paid)
     const stripe = getServerStripe()
+    
+    console.log('🔄 Creating Stripe session with metadata:', {
+      totalLineItems: lineItems.length,
+      enrollmentIds,
+      courseNames: items.map(item => {
+        const course = coursesData.find(c => c.course.Unique_id === item.courseId)
+        return course?.course.name || 'Unknown Course'
+      }),
+      coursePrices: items.map(item => {
+        const course = coursesData.find(c => c.course.Unique_id === item.courseId)
+        const plan = course?.plans.find(p => p.label === item.planLabel)
+        return plan?.price || 0
+      }),
+      planLabels: items.map(item => item.planLabel)
+    })
     
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -161,6 +216,22 @@ export async function POST(req: NextRequest): Promise<NextResponse<CheckoutRespo
           const course = coursesData.find(c => c.course.Unique_id === item.courseId)
           const plan = course?.plans.find(p => p.label === item.planLabel)
           return plan?.category || 'course'
+        })),
+        // Store individual course data for each item - use actual data from coursesData
+        coursePrices: JSON.stringify(items.map(item => {
+          const course = coursesData.find(c => c.course.Unique_id === item.courseId)
+          const plan = course?.plans.find(p => p.label === item.planLabel)
+          return plan?.price || 0
+        })),
+        courseNames: JSON.stringify(items.map(item => {
+          const course = coursesData.find(c => c.course.Unique_id === item.courseId)
+          return course?.course.name || 'Unknown Course'
+        })),
+        planLabels: JSON.stringify(items.map((item: CheckoutItem) => item.planLabel)),
+        enrollmentUrls: JSON.stringify(items.map(item => {
+          const course = coursesData.find(c => c.course.Unique_id === item.courseId)
+          const plan = course?.plans.find(p => p.label === item.planLabel)
+          return plan?.url || ''
         })),
       },
       

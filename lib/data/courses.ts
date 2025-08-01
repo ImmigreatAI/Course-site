@@ -109,7 +109,7 @@ export const coursesData: CourseData[] = [
       description: "Perfect bundle covering basics to petition filing",
       package: [
         "ultimate-eb1a-roadmap",
-        "utmimate-eb1a-duplicate"
+        "ultimate-green-card-roadmap"
       ]
     },
     plans: [

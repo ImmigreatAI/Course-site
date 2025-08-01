@@ -1,18 +1,24 @@
+// components/CartIcon.tsx
 'use client'
 
+import { useEffect } from 'react'
 import { ShoppingCart } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useCartStore } from '@/lib/store/cart-store'
-import { useCartHydration } from '@/lib/hooks/use-cart-hydration'
 
 interface CartIconProps {
   onClick: () => void
 }
 
 export function CartIcon({ onClick }: CartIconProps) {
-  const isHydrated = useCartHydration()
-  const itemCount = useCartStore((state) => state.items.length)
+  const { isHydrated, setHydrated, getItemCount } = useCartStore()
+  const itemCount = getItemCount()
+  
+  // Handle hydration
+  useEffect(() => {
+    setHydrated()
+  }, [setHydrated])
   
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()

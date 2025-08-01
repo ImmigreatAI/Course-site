@@ -197,11 +197,18 @@ async function enrollUser(
   try {
     const url = `${LEARNWORLDS_API_URL}/users/${encodeURIComponent(email)}/enrollment`
     
+    // For free courses, always include price: 0 (LearnWorlds requires it)
+    const requestBody = { ...enrollmentData }
+    if (enrollmentData.price === 0) {
+      console.log('🆓 Processing free course enrollment with price: 0')
+      requestBody.price = 0 // Ensure price is explicitly 0
+    }
+    
     console.log('Enrolling user:', { 
       url, 
       email, 
-      productId: enrollmentData.productId,
-      productType: enrollmentData.productType
+      requestBody,
+      isFree: enrollmentData.price === 0
     })
     
     const response = await fetch(url, {
@@ -212,7 +219,7 @@ async function enrollUser(
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: JSON.stringify(enrollmentData)
+      body: JSON.stringify(requestBody)
     })
 
     console.log('Enrollment response:', {
@@ -221,12 +228,17 @@ async function enrollUser(
       contentType: response.headers.get('content-type')
     })
 
+    // Read response text once and store it
+    const responseText = await response.text()
+    console.log('Raw enrollment response:', {
+      status: response.status,
+      responseLength: responseText.length,
+      responsePreview: responseText.substring(0, 200)
+    })
+
     if (response.ok) {
-      const responseText = await response.text()
-      console.log('Raw enrollment response:', responseText)
-      
       if (!responseText.trim()) {
-        console.log('Empty enrollment response - assuming success')
+        console.log('Empty enrollment response but 200 status - assuming success')
         return true
       }
       
@@ -236,7 +248,8 @@ async function enrollUser(
           email,
           productId: enrollmentData.productId,
           productType: enrollmentData.productType,
-          success: result.success
+          success: result.success,
+          result
         })
         return result.success === true
       } catch (parseError) {
@@ -244,15 +257,31 @@ async function enrollUser(
         return true
       }
     } else {
-      const errorText = await response.text().catch(() => 'Unable to read error response')
-      console.error('Error enrolling user:', {
+      // Handle specific error cases
+      let errorMessage = responseText
+      
+      try {
+        const errorJson = JSON.parse(responseText)
+        errorMessage = errorJson.error || errorJson.message || responseText
+        
+        // Handle "already owned" as success (user already has the course)
+        if (errorMessage.includes('already owned') || errorMessage.includes('Product is already owned')) {
+          console.log('⚠️ Course already owned by user - treating as success')
+          return true
+        }
+      } catch (parseError) {
+        // Use raw response text as error message
+      }
+      
+      console.error('Enrollment API error:', {
         status: response.status,
         statusText: response.statusText,
-        errorText,
+        errorMessage: errorMessage.substring(0, 500),
         email,
         enrollmentData
       })
-      throw new Error(`Failed to enroll user: ${response.status} - ${errorText}`)
+      
+      throw new Error(`Failed to enroll user: ${response.status} - ${errorMessage}`)
     }
   } catch (error) {
     console.error('Error in enrollUser:', error)
@@ -262,88 +291,247 @@ async function enrollUser(
 
 // Complete enrollment process
 async function processEnrollment(session: Stripe.Checkout.Session): Promise<void> {
+  console.log('\n🚀 === STARTING ENROLLMENT PROCESS ===')
+  
   const userEmail = session.metadata?.userEmail
   const userName = session.metadata?.userName || 'User'
   const enrollmentIds = session.metadata?.enrollmentIds
   const courseCategories = session.metadata?.courseCategories
+  const coursePrices = session.metadata?.coursePrices
+  const courseNames = session.metadata?.courseNames
+
+  console.log('📋 Session metadata extracted:', {
+    userEmail,
+    userName,
+    enrollmentIds,
+    courseCategories,
+    coursePrices,
+    courseNames,
+    sessionId: session.id,
+    amountTotal: session.amount_total
+  })
 
   if (!userEmail || !enrollmentIds) {
+    console.log('❌ MISSING REQUIRED DATA:', { hasEmail: !!userEmail, hasEnrollmentIds: !!enrollmentIds })
     throw new Error('Missing required enrollment data')
   }
 
   let parsedEnrollmentIds: string[]
   let parsedCategories: string[]
+  let parsedPrices: number[]
+  let parsedNames: string[]
 
   try {
     parsedEnrollmentIds = JSON.parse(enrollmentIds)
     parsedCategories = JSON.parse(courseCategories || '[]')
+    parsedPrices = JSON.parse(coursePrices || '[]')
+    parsedNames = JSON.parse(courseNames || '[]')
+    
+    console.log('✅ Parsed enrollment data:', {
+      enrollmentIds: parsedEnrollmentIds,
+      categories: parsedCategories,
+      individualPrices: parsedPrices,
+      courseNames: parsedNames,
+      totalCourses: parsedEnrollmentIds.length
+    })
   } catch (error) {
+    console.log('❌ FAILED TO PARSE ENROLLMENT DATA:', error)
     throw new Error('Failed to parse enrollment data')
   }
+
+  console.log(`\n👤 === USER MANAGEMENT PHASE ===`)
+  console.log(`Checking if user exists: ${userEmail}`)
 
   // Step 1: Check if user exists, create if not
   let user = await checkUserExists(userEmail)
   if (!user) {
+    console.log('⚠️  User does not exist, creating new user...')
     user = await createUser(userEmail, userName)
+    console.log('✅ New user created successfully')
+  } else {
+    console.log('✅ User already exists, proceeding with enrollment')
   }
 
-  // Step 2: Enroll in all courses/bundles
-  const enrollmentPromises = parsedEnrollmentIds.map(async (enrollmentId, index) => {
-    const category = parsedCategories[index] || 'course'
+  console.log(`\n📚 === COURSE ENROLLMENT PHASE ===`)
+  console.log(`Total courses to enroll: ${parsedEnrollmentIds.length}`)
+
+  // Step 2: Enroll in each course/bundle individually with correct individual prices
+  const enrollmentResults: Array<{
+    enrollmentId: string
+    category: string
+    success: boolean
+    error?: string
+    index: number
+    originalPrice: number
+    courseName: string
+  }> = []
+
+  for (let i = 0; i < parsedEnrollmentIds.length; i++) {
+    const enrollmentId = parsedEnrollmentIds[i]
+    const category = parsedCategories[i] || 'course'
+    const originalPrice = parsedPrices[i] || 0
+    const courseName = parsedNames[i] || 'Unknown Course'
     const productType = category === 'bundle' ? 'bundle' : 'course'
+    const courseNumber = i + 1
     
+    console.log(`\n📖 === ENROLLING COURSE ${courseNumber}/${parsedEnrollmentIds.length} ===`)
+    console.log('Course details:', {
+      enrollmentId,
+      courseName,
+      category,
+      productType,
+      originalPrice,
+      index: i
+    })
+
     const enrollmentData: EnrollmentData = {
       productId: enrollmentId,
       productType: productType,
       justification: 'Added by admin - Stripe payment completed',
-      price: session.amount_total ? session.amount_total / 100 : 0, // Convert from cents
+      price: originalPrice, // Use ORIGINAL individual price, not divided amount
       send_enrollment_email: true
     }
 
-    return enrollUser(userEmail, enrollmentData)
-  })
+    console.log('Enrollment data prepared with ORIGINAL PRICE:', {
+      ...enrollmentData,
+      priceType: typeof enrollmentData.price,
+      isFree: enrollmentData.price === 0
+    })
 
-  // Wait for all enrollments to complete
-  const enrollmentResults = await Promise.allSettled(enrollmentPromises)
+    try {
+      console.log(`⏳ Starting enrollment for course ${courseNumber} with price ${originalPrice}...`)
+      const success = await enrollUser(userEmail, enrollmentData)
+      
+      enrollmentResults.push({
+        enrollmentId,
+        category,
+        success,
+        index: i,
+        originalPrice,
+        courseName
+      })
+      
+      if (success) {
+        console.log(`✅ SUCCESS: Course ${courseNumber} "${courseName}" enrolled successfully at ${originalPrice}!`)
+        console.log('Successful enrollment details:', {
+          enrollmentId,
+          courseName,
+          productType,
+          originalPrice,
+          userEmail,
+          success: true
+        })
+      } else {
+        console.log(`❌ FAILED: Course ${courseNumber} "${courseName}" enrollment returned false`)
+        console.log('Failed enrollment details:', {
+          enrollmentId,
+          courseName,
+          productType,
+          originalPrice,
+          userEmail,
+          success: false
+        })
+      }
+
+      // Add delay between enrollments to avoid rate limiting
+      if (i < parsedEnrollmentIds.length - 1) {
+        console.log(`⏱️  Waiting 500ms before next enrollment...`)
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      
+      enrollmentResults.push({
+        enrollmentId,
+        category,
+        success: false,
+        error: errorMessage,
+        index: i,
+        originalPrice,
+        courseName
+      })
+      
+      console.log(`❌ ERROR: Course ${courseNumber} "${courseName}" enrollment failed with exception!`)
+      console.log('Error details:', {
+        enrollmentId,
+        courseName,
+        productType,
+        originalPrice,
+        userEmail,
+        error: errorMessage,
+        fullError: error
+      })
+    }
+  }
+
+  console.log(`\n📊 === ENROLLMENT SUMMARY ===`)
   
-  // Log results
-  const successCount = enrollmentResults.filter(result => 
-    result.status === 'fulfilled' && result.value === true
-  ).length
-
+  // Summary of enrollment results
+  const successCount = enrollmentResults.filter(result => result.success).length
   const failureCount = enrollmentResults.length - successCount
+  const successfulEnrollments = enrollmentResults.filter(result => result.success)
+  const failedEnrollments = enrollmentResults.filter(result => !result.success)
 
-  console.log('Enrollment process completed:', {
+  console.log('Final enrollment results:', {
     sessionId: session.id,
     userEmail,
     totalCourses: parsedEnrollmentIds.length,
     successful: successCount,
-    failed: failureCount
+    failed: failureCount,
+    allResults: enrollmentResults.map(r => ({
+      courseName: r.courseName,
+      originalPrice: r.originalPrice,
+      success: r.success,
+      error: r.error
+    }))
   })
 
-  // Log any failures
-  enrollmentResults.forEach((result, index) => {
-    if (result.status === 'rejected') {
-      console.error(`Enrollment failed for ${parsedEnrollmentIds[index]}:`, result.reason)
-    }
-  })
+  if (successfulEnrollments.length > 0) {
+    console.log('✅ SUCCESSFUL ENROLLMENTS:')
+    successfulEnrollments.forEach((result, index) => {
+      console.log(`  ${index + 1}. "${result.courseName}" - ${result.originalPrice} (${result.category})`)
+    })
+  }
+
+  if (failedEnrollments.length > 0) {
+    console.log('❌ FAILED ENROLLMENTS:')
+    failedEnrollments.forEach((result, index) => {
+      console.log(`  ${index + 1}. "${result.courseName}" - ${result.originalPrice} (${result.category}) - Error: ${result.error || 'Unknown'}`)
+    })
+  }
 
   if (failureCount > 0) {
-    throw new Error(`${failureCount} out of ${enrollmentResults.length} enrollments failed`)
+    const errorMessage = `${failureCount} out of ${enrollmentResults.length} enrollments failed. Check logs for details.`
+    console.log(`❌ ENROLLMENT PROCESS FAILED: ${errorMessage}`)
+    throw new Error(errorMessage)
   }
+
+  console.log('🎉 === ALL COURSES ENROLLED SUCCESSFULLY! ===\n')
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse<WebhookResponse>> {
   let body: string
   let signature: string | null
+  let event: Stripe.Event
+
+  console.log('\n🔐 === WEBHOOK VERIFICATION PHASE ===')
 
   try {
     // Get the raw body and signature
     body = await req.text()
     signature = req.headers.get('stripe-signature')
 
+    console.log('Webhook request received:', {
+      hasBody: !!body,
+      bodyLength: body.length,
+      hasSignature: !!signature,
+      signaturePreview: signature?.substring(0, 20) + '...',
+      timestamp: new Date().toISOString()
+    })
+
     if (!signature) {
-      console.error('Missing Stripe signature in webhook request')
+      console.error('❌ VERIFICATION FAILED: Missing Stripe signature in webhook request')
       return NextResponse.json(
         { error: 'Missing Stripe signature' },
         { status: 400 }
@@ -351,7 +539,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
     }
 
     if (!process.env.STRIPE_WEBHOOK_SECRET) {
-      console.error('STRIPE_WEBHOOK_SECRET not configured')
+      console.error('❌ VERIFICATION FAILED: STRIPE_WEBHOOK_SECRET not configured')
       return NextResponse.json(
         { error: 'Webhook secret not configured' },
         { status: 500 }
@@ -360,15 +548,17 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
 
     // Check LearnWorlds API configuration
     if (!LEARNWORLDS_AUTH_HEADER || !LEARNWORLDS_CLIENT_HEADER) {
-      console.error('LearnWorlds API credentials not configured')
+      console.error('❌ VERIFICATION FAILED: LearnWorlds API credentials not configured')
       return NextResponse.json(
         { error: 'LearnWorlds API not configured' },
         { status: 500 }
       )
     }
 
+    console.log('✅ All required configurations present')
+
   } catch (error) {
-    console.error('Error reading webhook request:', error)
+    console.error('❌ VERIFICATION FAILED: Error reading webhook request:', error)
     return NextResponse.json(
       { error: 'Invalid request' },
       { status: 400 }
@@ -376,17 +566,27 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
   }
 
   // Verify webhook signature
-  let event: Stripe.Event
   const stripe = getServerStripe()
 
   try {
+    console.log('🔍 Verifying Stripe webhook signature...')
+    
     event = stripe.webhooks.constructEvent(
       body,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET
     )
+    
+    console.log('✅ WEBHOOK SIGNATURE VERIFIED SUCCESSFULLY')
+    console.log('Verified event details:', {
+      eventId: event.id,
+      eventType: event.type,
+      created: new Date(event.created * 1000).toISOString(),
+      livemode: event.livemode
+    })
+    
   } catch (error) {
-    console.error('Webhook signature verification failed:', {
+    console.error('❌ WEBHOOK SIGNATURE VERIFICATION FAILED:', {
       error: error instanceof Error ? error.message : 'Unknown error',
       signature: signature?.slice(0, 20) + '...',
     })
@@ -397,25 +597,38 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
     )
   }
 
-  // Process webhook events
+  // Process webhook events ONLY after successful verification
   try {
-    console.log(`Processing webhook event: ${event.type} (${event.id})`)
+    console.log(`\n🎯 === PROCESSING VERIFIED EVENT: ${event.type} ===`)
+    console.log('Event ID:', event.id)
 
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session
         
-        // Validate required data
+        console.log('\n💳 === CHECKOUT SESSION COMPLETED ===')
+        console.log('Session details:', {
+          sessionId: session.id,
+          paymentStatus: session.payment_status,
+          amountTotal: session.amount_total,
+          currency: session.currency,
+          customerEmail: session.customer_details?.email,
+          mode: session.mode
+        })
+        
+        // Validate required metadata
         if (!session.metadata?.userEmail || !session.metadata?.enrollmentIds) {
-          console.error('Missing required metadata in session:', {
+          console.error('❌ ENROLLMENT SKIPPED: Missing required metadata in session:', {
             sessionId: session.id,
             hasUserEmail: !!session.metadata?.userEmail,
             hasEnrollmentIds: !!session.metadata?.enrollmentIds,
+            metadata: session.metadata
           })
           break
         }
 
-        console.log('Payment successful - processing enrollment:', {
+        console.log('✅ Session metadata validation passed')
+        console.log('Payment successful - starting enrollment process:', {
           sessionId: session.id,
           userEmail: session.metadata.userEmail,
           userName: session.metadata.userName,
@@ -425,12 +638,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
         })
 
         try {
+          console.log('\n🚀 === STARTING ENROLLMENT PROCESS ===')
           await processEnrollment(session)
-          console.log('Enrollment process completed successfully')
+          console.log('✅ ENROLLMENT PROCESS COMPLETED SUCCESSFULLY')
         } catch (enrollmentError) {
-          console.error('Enrollment process failed:', {
+          console.error('❌ ENROLLMENT PROCESS FAILED:', {
             sessionId: session.id,
-            error: enrollmentError instanceof Error ? enrollmentError.message : 'Unknown error'
+            error: enrollmentError instanceof Error ? enrollmentError.message : 'Unknown error',
+            stack: enrollmentError instanceof Error ? enrollmentError.stack : undefined
           })
           // Don't fail the webhook - log the error for manual review
         }
@@ -441,7 +656,8 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
       case 'checkout.session.expired': {
         const session = event.data.object as Stripe.Checkout.Session
         
-        console.log('Checkout session expired:', {
+        console.log('\n⏰ === CHECKOUT SESSION EXPIRED ===')
+        console.log('Expired session details:', {
           sessionId: session.id,
           userEmail: session.metadata?.userEmail,
           createdAt: new Date(session.created * 1000).toISOString(),
@@ -454,17 +670,19 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
       case 'checkout.session.async_payment_succeeded': {
         const session = event.data.object as Stripe.Checkout.Session
         
-        console.log('Async payment succeeded:', {
+        console.log('\n💰 === ASYNC PAYMENT SUCCEEDED ===')
+        console.log('Async payment details:', {
           sessionId: session.id,
           userEmail: session.metadata?.userEmail,
         })
 
         // Handle delayed payment success (e.g., bank transfers)
         try {
+          console.log('🚀 Starting enrollment for async payment...')
           await processEnrollment(session)
-          console.log('Async enrollment process completed successfully')
+          console.log('✅ Async enrollment process completed successfully')
         } catch (enrollmentError) {
-          console.error('Async enrollment process failed:', enrollmentError)
+          console.error('❌ Async enrollment process failed:', enrollmentError)
         }
         break
       }
@@ -472,7 +690,8 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
       case 'checkout.session.async_payment_failed': {
         const session = event.data.object as Stripe.Checkout.Session
         
-        console.log('Async payment failed:', {
+        console.log('\n❌ === ASYNC PAYMENT FAILED ===')
+        console.log('Failed async payment details:', {
           sessionId: session.id,
           userEmail: session.metadata?.userEmail,
         })
@@ -484,7 +703,8 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
       case 'payment_intent.payment_failed': {
         const paymentIntent = event.data.object as Stripe.PaymentIntent
         
-        console.log('Payment failed:', {
+        console.log('\n💳❌ === PAYMENT INTENT FAILED ===')
+        console.log('Failed payment details:', {
           paymentIntentId: paymentIntent.id,
           userEmail: paymentIntent.metadata?.userEmail,
           lastPaymentError: paymentIntent.last_payment_error,
@@ -497,14 +717,17 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
       case 'invoice.payment_succeeded': {
         // Handle successful recurring payments (if you add subscriptions later)
         const invoice = event.data.object as Stripe.Invoice
-        console.log('Invoice payment succeeded:', invoice.id)
+        console.log('\n📄✅ === INVOICE PAYMENT SUCCEEDED ===')
+        console.log('Invoice payment details:', { invoiceId: invoice.id })
         break
       }
 
       default:
-        console.log(`Unhandled event type: ${event.type}`)
+        console.log(`\n❓ === UNHANDLED EVENT TYPE: ${event.type} ===`)
+        console.log('Event will be acknowledged but not processed')
     }
 
+    console.log('\n✅ === WEBHOOK PROCESSING COMPLETED SUCCESSFULLY ===')
     return NextResponse.json({ 
       received: true,
       eventId: event.id,
@@ -512,7 +735,8 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
     })
 
   } catch (error) {
-    console.error('Webhook processing error:', {
+    console.error('\n❌ === WEBHOOK PROCESSING ERROR ===')
+    console.error('Processing error details:', {
       eventId: event.id,
       eventType: event.type,
       error: error instanceof Error ? error.message : 'Unknown error',
