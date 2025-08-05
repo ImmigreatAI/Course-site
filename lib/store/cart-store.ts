@@ -183,7 +183,7 @@ export const useCartStore = create<CartStore>()(
           }
         },
 
-        canAddToCart: (courseId: string, enrollmentId: string, packageIds = []) => {
+        canAddToCart: (courseId: string, enrollmentId: string) => {
           const items = get().items
           
           // Check if this course is already in cart (any plan)

@@ -6,7 +6,6 @@ import { ShoppingCart, Trash2, X, Loader2, AlertCircle, Package, BookOpen } from
 import { useCartStore } from '@/lib/store/cart-store'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { useRouter } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
 import { getStripe } from '@/lib/stripe/config'
 import { toast } from 'sonner'
@@ -27,10 +26,9 @@ interface CheckoutResponse {
 }
 
 export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
-  const router = useRouter()
   const { isSignedIn, isLoaded } = useUser()
   const dropdownRef = useRef<HTMLDivElement>(null)
-  const { items, removeItem, getSubtotal, clearCart } = useCartStore()
+  const { items, removeItem, getSubtotal } = useCartStore()
   const subtotal = getSubtotal()
   const [isLoading, setIsLoading] = useState(false)
   

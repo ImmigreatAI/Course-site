@@ -27,7 +27,7 @@ export const coursesData: CourseData[] = [
     },
     plans: [
       {
-        url: "https://gcpathways.learnworlds.com/course/ultimate-green-card-roadmap",
+        url: "https://courses.getgreencardonyourown.com/course/ultimate-green-card-roadmap",
         category: "course",
         type: "paid",
         label: "6mo",
@@ -36,7 +36,7 @@ export const coursesData: CourseData[] = [
         stripe_price_id: "price_1RqbGV4ZCTDn2SPMfidm2G38" // Placeholder - replace with actual
       },
       {
-        url: "https://gcpathways.learnworlds.com/course/green-card-duplicate-course",
+        url: "https://courses.getgreencardonyourown.com/course/green-card-duplicate-course",
         category: "course",
         type: "paid",
         label: "7day",
@@ -55,7 +55,7 @@ export const coursesData: CourseData[] = [
     },
     plans: [
       {
-        url: "https://gcpathways.learnworlds.com/course/ultimate-eb1a-roadmap",
+        url: "https://courses.getgreencardonyourown.com/course/ultimate-eb1a-roadmap",
         category: "course",
         type: "paid",
         label: "6mo",
@@ -64,7 +64,7 @@ export const coursesData: CourseData[] = [
         stripe_price_id: "price_1RqbKR4ZCTDn2SPMMOawPzi2" // Placeholder - replace with actual
       },
       {
-        url: "https://gcpathways.learnworlds.com/course/utmimate-eb1a-duplicate",
+        url: "https://courses.getgreencardonyourown.com/course/utmimate-eb1a-duplicate",
         category: "course",
         type: "paid",
         label: "7day",
@@ -83,7 +83,7 @@ export const coursesData: CourseData[] = [
     },
     plans: [
       {
-        url: "https://gcpathways.learnworlds.com/course/ultimate-eb2-niw-roadmap",
+        url: "https://courses.getgreencardonyourown.com/course/ultimate-eb2-niw-roadmap",
         category: "course",
         type: "free",
         label: "6mo",
@@ -92,7 +92,7 @@ export const coursesData: CourseData[] = [
         stripe_price_id: "price_1RqbPY4ZCTDn2SPMJ2afpOWq" // Placeholder for free course
       },
       {
-        url: "https://gcpathways.learnworlds.com/course/ultimate-eb2-niw-roadmap",
+        url: "https://courses.getgreencardonyourown.com/course/ultimate-eb2-niw-roadmap",
         category: "course",
         type: "free",
         label: "7day",
@@ -114,7 +114,7 @@ export const coursesData: CourseData[] = [
     },
     plans: [
       {
-        url: "https://gcpathways.learnworlds.com/program/eb1a-bundle",
+        url: "https://courses.getgreencardonyourown.com/program/eb1a-bundle",
         category: "bundle",
         type: "paid",
         label: "6mo",

@@ -1,6 +1,7 @@
 // app/api/stripe/webhook/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerStripe } from '@/lib/stripe/config'
+import { databaseService } from '@/lib/services/database.service'
 import Stripe from 'stripe'
 
 // Use Node.js runtime for proper webhook handling
@@ -18,6 +19,9 @@ const LEARNWORLDS_API_URL = process.env.LEARNWORLDS_API_URL || 'https://courses.
 const LEARNWORLDS_AUTH_HEADER = `Bearer ${process.env.LEARNWORLDS_AUTH_TOKEN || ''}`
 const LEARNWORLDS_CLIENT_HEADER = process.env.LEARNWORLDS_CLIENT_TOKEN || ''
 
+// Rate limiting configuration
+const LEARNWORLDS_API_DELAY_MS = 500 // 0.5 seconds between API calls
+
 interface LearnWorldsUser {
   id?: string
   email: string
@@ -30,6 +34,12 @@ interface EnrollmentData {
   justification: string
   price: number
   send_enrollment_email: boolean
+}
+
+// Helper function to add delay
+async function delayForRateLimit() {
+  console.log(`⏱️  Waiting ${LEARNWORLDS_API_DELAY_MS}ms for rate limiting...`)
+  await new Promise(resolve => setTimeout(resolve, LEARNWORLDS_API_DELAY_MS))
 }
 
 // Check if user exists in LearnWorlds
@@ -252,7 +262,7 @@ async function enrollUser(
           result
         })
         return result.success === true
-      } catch (parseError) {
+      } catch {
         console.log('Could not parse enrollment response, but got 200 status - assuming success')
         return true
       }
@@ -269,7 +279,7 @@ async function enrollUser(
           console.log('⚠️ Course already owned by user - treating as success')
           return true
         }
-      } catch (parseError) {
+      } catch {
         // Use raw response text as error message
       }
       
@@ -289,7 +299,7 @@ async function enrollUser(
   }
 }
 
-// Complete enrollment process
+// Complete enrollment process with database operations
 async function processEnrollment(session: Stripe.Checkout.Session): Promise<void> {
   console.log('\n🚀 === STARTING ENROLLMENT PROCESS ===')
   
@@ -299,6 +309,10 @@ async function processEnrollment(session: Stripe.Checkout.Session): Promise<void
   const courseCategories = session.metadata?.courseCategories
   const coursePrices = session.metadata?.coursePrices
   const courseNames = session.metadata?.courseNames
+  const planLabels = session.metadata?.planLabels
+  const stripePriceIds = session.metadata?.stripePriceIds
+  const enrollmentUrls = session.metadata?.enrollmentUrls
+  const clerkUserId = session.metadata?.userId
 
   console.log('📋 Session metadata extracted:', {
     userEmail,
@@ -308,11 +322,16 @@ async function processEnrollment(session: Stripe.Checkout.Session): Promise<void
     coursePrices,
     courseNames,
     sessionId: session.id,
-    amountTotal: session.amount_total
+    amountTotal: session.amount_total,
+    clerkUserId
   })
 
-  if (!userEmail || !enrollmentIds) {
-    console.log('❌ MISSING REQUIRED DATA:', { hasEmail: !!userEmail, hasEnrollmentIds: !!enrollmentIds })
+  if (!userEmail || !enrollmentIds || !clerkUserId) {
+    console.log('❌ MISSING REQUIRED DATA:', { 
+      hasEmail: !!userEmail, 
+      hasEnrollmentIds: !!enrollmentIds,
+      hasClerkUserId: !!clerkUserId 
+    })
     throw new Error('Missing required enrollment data')
   }
 
@@ -320,18 +339,25 @@ async function processEnrollment(session: Stripe.Checkout.Session): Promise<void
   let parsedCategories: string[]
   let parsedPrices: number[]
   let parsedNames: string[]
+  let parsedPlanLabels: string[]
+  let parsedStripePriceIds: string[]
+  let parsedEnrollmentUrls: string[]
 
   try {
     parsedEnrollmentIds = JSON.parse(enrollmentIds)
     parsedCategories = JSON.parse(courseCategories || '[]')
     parsedPrices = JSON.parse(coursePrices || '[]')
     parsedNames = JSON.parse(courseNames || '[]')
+    parsedPlanLabels = JSON.parse(planLabels || '[]')
+    parsedStripePriceIds = JSON.parse(stripePriceIds || '[]')
+    parsedEnrollmentUrls = JSON.parse(enrollmentUrls || '[]')
     
     console.log('✅ Parsed enrollment data:', {
       enrollmentIds: parsedEnrollmentIds,
       categories: parsedCategories,
       individualPrices: parsedPrices,
       courseNames: parsedNames,
+      planLabels: parsedPlanLabels,
       totalCourses: parsedEnrollmentIds.length
     })
   } catch (error) {
@@ -339,175 +365,254 @@ async function processEnrollment(session: Stripe.Checkout.Session): Promise<void
     throw new Error('Failed to parse enrollment data')
   }
 
-  console.log(`\n👤 === USER MANAGEMENT PHASE ===`)
-  console.log(`Checking if user exists: ${userEmail}`)
-
-  // Step 1: Check if user exists, create if not
-  let user = await checkUserExists(userEmail)
-  if (!user) {
-    console.log('⚠️  User does not exist, creating new user...')
-    user = await createUser(userEmail, userName)
-    console.log('✅ New user created successfully')
-  } else {
-    console.log('✅ User already exists, proceeding with enrollment')
-  }
-
-  console.log(`\n📚 === COURSE ENROLLMENT PHASE ===`)
-  console.log(`Total courses to enroll: ${parsedEnrollmentIds.length}`)
-
-  // Step 2: Enroll in each course/bundle individually with correct individual prices
-  const enrollmentResults: Array<{
-    enrollmentId: string
-    category: string
-    success: boolean
-    error?: string
-    index: number
-    originalPrice: number
-    courseName: string
-  }> = []
-
-  for (let i = 0; i < parsedEnrollmentIds.length; i++) {
-    const enrollmentId = parsedEnrollmentIds[i]
-    const category = parsedCategories[i] || 'course'
-    const originalPrice = parsedPrices[i] || 0
-    const courseName = parsedNames[i] || 'Unknown Course'
-    const productType = category === 'bundle' ? 'bundle' : 'course'
-    const courseNumber = i + 1
+  // === DATABASE OPERATIONS START ===
+  console.log('\n💾 === DATABASE OPERATIONS PHASE ===')
+  
+  try {
+    // Get or create user in database
+    console.log('🔍 Checking user in database...')
+    let dbUser = await databaseService.getUserByClerkId(clerkUserId)
     
-    console.log(`\n📖 === ENROLLING COURSE ${courseNumber}/${parsedEnrollmentIds.length} ===`)
-    console.log('Course details:', {
-      enrollmentId,
-      courseName,
-      category,
-      productType,
-      originalPrice,
-      index: i
-    })
-
-    const enrollmentData: EnrollmentData = {
-      productId: enrollmentId,
-      productType: productType,
-      justification: 'Added by admin - Stripe payment completed',
-      price: originalPrice, // Use ORIGINAL individual price, not divided amount
-      send_enrollment_email: true
+    if (!dbUser) {
+      console.log('📝 Creating user in database...')
+      dbUser = await databaseService.createOrUpdateUser({
+        clerk_user_id: clerkUserId,
+        email: userEmail,
+        full_name: userName,
+        username: userName
+      })
+      console.log('✅ User created in database:', dbUser.id)
+    } else {
+      console.log('✅ User found in database:', dbUser.id)
     }
 
-    console.log('Enrollment data prepared with ORIGINAL PRICE:', {
-      ...enrollmentData,
-      priceType: typeof enrollmentData.price,
-      isFree: enrollmentData.price === 0
+    // Create purchase record
+    console.log('💳 Creating purchase record...')
+    const purchase = await databaseService.createPurchase({
+      user_id: dbUser.id,
+      stripe_session_id: session.id,
+      stripe_payment_intent_id: session.payment_intent as string | null,
+      amount: session.amount_total || 0,
+      currency: session.currency || 'usd'
     })
+    console.log('✅ Purchase record created:', purchase.id)
 
-    try {
-      console.log(`⏳ Starting enrollment for course ${courseNumber} with price ${originalPrice}...`)
-      const success = await enrollUser(userEmail, enrollmentData)
+    // Create purchase items
+    console.log('📦 Creating purchase items...')
+    const purchaseItemsData = parsedEnrollmentIds.map((enrollmentId, i) => ({
+      course_id: enrollmentId,
+      course_name: parsedNames[i] || 'Unknown Course',
+      plan_label: (parsedPlanLabels[i] || '6mo') as '6mo' | '7day',
+      price: parsedPrices[i] || 0,
+      enrollment_id: enrollmentId,
+      stripe_price_id: parsedStripePriceIds[i] || ''
+    }))
+
+    const purchaseItems = await databaseService.createPurchaseItems(purchase.id, purchaseItemsData)
+    console.log('✅ Purchase items created:', purchaseItems.length)
+
+    // === LEARNWORLDS ENROLLMENT START ===
+    console.log(`\n👤 === USER MANAGEMENT PHASE ===`)
+    console.log(`Checking if user exists in LearnWorlds: ${userEmail}`)
+
+    // Step 1: Check if user exists in LearnWorlds, create if not
+    let user = await checkUserExists(userEmail)
+    
+    // Add delay after user check API call
+    await delayForRateLimit()
+    
+    if (!user) {
+      console.log('⚠️  User does not exist in LearnWorlds, creating new user...')
+      user = await createUser(userEmail, userName)
+      console.log('✅ New user created successfully in LearnWorlds')
       
-      enrollmentResults.push({
-        enrollmentId,
-        category,
-        success,
-        index: i,
-        originalPrice,
-        courseName
-      })
+      // Add delay after user creation API call
+      await delayForRateLimit()
       
-      if (success) {
-        console.log(`✅ SUCCESS: Course ${courseNumber} "${courseName}" enrolled successfully at ${originalPrice}!`)
-        console.log('Successful enrollment details:', {
-          enrollmentId,
-          courseName,
-          productType,
-          originalPrice,
-          userEmail,
-          success: true
+      // Update database with LearnWorlds user ID
+      if (user.id) {
+        await databaseService.createOrUpdateUser({
+          clerk_user_id: clerkUserId,
+          email: userEmail,
+          full_name: userName,
+          username: userName,
+          learnworlds_user_id: user.id
         })
-      } else {
-        console.log(`❌ FAILED: Course ${courseNumber} "${courseName}" enrollment returned false`)
-        console.log('Failed enrollment details:', {
-          enrollmentId,
-          courseName,
-          productType,
-          originalPrice,
-          userEmail,
-          success: false
-        })
+        console.log('✅ Updated database with LearnWorlds user ID')
       }
+    } else {
+      console.log('✅ User already exists in LearnWorlds, proceeding with enrollment')
+    }
 
-      // Add delay between enrollments to avoid rate limiting
-      if (i < parsedEnrollmentIds.length - 1) {
-        console.log(`⏱️  Waiting 500ms before next enrollment...`)
-        await new Promise(resolve => setTimeout(resolve, 500))
-      }
+    console.log(`\n📚 === COURSE ENROLLMENT PHASE ===`)
+    console.log(`Total courses to enroll: ${parsedEnrollmentIds.length}`)
 
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    // Step 2: Enroll in each course/bundle individually with correct individual prices
+    const enrollmentResults: Array<{
+      enrollmentId: string
+      category: string
+      success: boolean
+      error?: string
+      index: number
+      originalPrice: number
+      courseName: string
+    }> = []
+
+    for (let i = 0; i < parsedEnrollmentIds.length; i++) {
+      const enrollmentId = parsedEnrollmentIds[i]
+      const category = parsedCategories[i] || 'course'
+      const originalPrice = parsedPrices[i] || 0
+      const courseName = parsedNames[i] || 'Unknown Course'
+      const productType = category === 'bundle' ? 'bundle' : 'course'
+      const courseNumber = i + 1
       
-      enrollmentResults.push({
-        enrollmentId,
-        category,
-        success: false,
-        error: errorMessage,
-        index: i,
-        originalPrice,
-        courseName
-      })
-      
-      console.log(`❌ ERROR: Course ${courseNumber} "${courseName}" enrollment failed with exception!`)
-      console.log('Error details:', {
+      console.log(`\n📖 === ENROLLING COURSE ${courseNumber}/${parsedEnrollmentIds.length} ===`)
+      console.log('Course details:', {
         enrollmentId,
         courseName,
+        category,
         productType,
         originalPrice,
-        userEmail,
-        error: errorMessage,
-        fullError: error
+        index: i
+      })
+
+      const enrollmentData: EnrollmentData = {
+        productId: enrollmentId,
+        productType: productType,
+        justification: 'Added by admin - Stripe payment completed',
+        price: originalPrice, // Use ORIGINAL individual price, not divided amount
+        send_enrollment_email: true
+      }
+
+      console.log('Enrollment data prepared with ORIGINAL PRICE:', {
+        ...enrollmentData,
+        priceType: typeof enrollmentData.price,
+        isFree: enrollmentData.price === 0
+      })
+
+      try {
+        console.log(`⏳ Starting enrollment for course ${courseNumber} with price ${originalPrice}...`)
+        const success = await enrollUser(userEmail, enrollmentData)
+        
+        enrollmentResults.push({
+          enrollmentId,
+          category,
+          success,
+          index: i,
+          originalPrice,
+          courseName
+        })
+        
+        if (success) {
+          console.log(`✅ SUCCESS: Course ${courseNumber} "${courseName}" enrolled successfully at ${originalPrice}!`)
+          
+          // Create enrollment record in database
+          const purchaseItem = purchaseItems[i]
+          const enrollmentUrl = parsedEnrollmentUrls[i] || ''
+          
+          console.log('💾 Creating enrollment record in database...')
+          await databaseService.createEnrollment({
+            user_id: dbUser.id,
+            purchase_item_id: purchaseItem.id,
+            course_id: enrollmentId,
+            course_name: courseName,
+            course_url: enrollmentUrl,
+            plan_label: parsedPlanLabels[i] || '6mo',
+            learnworlds_enrollment_id: enrollmentId
+          })
+          console.log('✅ Enrollment record created in database')
+        } else {
+          console.log(`❌ FAILED: Course ${courseNumber} "${courseName}" enrollment returned false`)
+        }
+
+        // Add delay after each enrollment API call (even if it's the last one)
+        await delayForRateLimit()
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        
+        enrollmentResults.push({
+          enrollmentId,
+          category,
+          success: false,
+          error: errorMessage,
+          index: i,
+          originalPrice,
+          courseName
+        })
+        
+        console.log(`❌ ERROR: Course ${courseNumber} "${courseName}" enrollment failed with exception!`)
+        console.log('Error details:', {
+          enrollmentId,
+          courseName,
+          productType,
+          originalPrice,
+          userEmail,
+          error: errorMessage,
+          fullError: error
+        })
+        
+        // Still add delay after failed enrollment to respect rate limits
+        await delayForRateLimit()
+      }
+    }
+
+    console.log(`\n📊 === ENROLLMENT SUMMARY ===`)
+    
+    // Summary of enrollment results
+    const successCount = enrollmentResults.filter(result => result.success).length
+    const failureCount = enrollmentResults.length - successCount
+    const successfulEnrollments = enrollmentResults.filter(result => result.success)
+    const failedEnrollments = enrollmentResults.filter(result => !result.success)
+
+    console.log('Final enrollment results:', {
+      sessionId: session.id,
+      userEmail,
+      totalCourses: parsedEnrollmentIds.length,
+      successful: successCount,
+      failed: failureCount,
+      allResults: enrollmentResults.map(r => ({
+        courseName: r.courseName,
+        originalPrice: r.originalPrice,
+        success: r.success,
+        error: r.error
+      }))
+    })
+
+    if (successfulEnrollments.length > 0) {
+      console.log('✅ SUCCESSFUL ENROLLMENTS:')
+      successfulEnrollments.forEach((result, index) => {
+        console.log(`  ${index + 1}. "${result.courseName}" - ${result.originalPrice} (${result.category})`)
       })
     }
-  }
 
-  console.log(`\n📊 === ENROLLMENT SUMMARY ===`)
-  
-  // Summary of enrollment results
-  const successCount = enrollmentResults.filter(result => result.success).length
-  const failureCount = enrollmentResults.length - successCount
-  const successfulEnrollments = enrollmentResults.filter(result => result.success)
-  const failedEnrollments = enrollmentResults.filter(result => !result.success)
+    if (failedEnrollments.length > 0) {
+      console.log('❌ FAILED ENROLLMENTS:')
+      failedEnrollments.forEach((result, index) => {
+        console.log(`  ${index + 1}. "${result.courseName}" - ${result.originalPrice} (${result.category}) - Error: ${result.error || 'Unknown'}`)
+      })
+    }
 
-  console.log('Final enrollment results:', {
-    sessionId: session.id,
-    userEmail,
-    totalCourses: parsedEnrollmentIds.length,
-    successful: successCount,
-    failed: failureCount,
-    allResults: enrollmentResults.map(r => ({
-      courseName: r.courseName,
-      originalPrice: r.originalPrice,
-      success: r.success,
-      error: r.error
-    }))
-  })
+    // Mark purchase as completed in database
+    console.log('💾 Marking purchase as completed...')
+    await databaseService.completePurchase(session.id)
+    console.log('✅ Purchase marked as completed in database')
 
-  if (successfulEnrollments.length > 0) {
-    console.log('✅ SUCCESSFUL ENROLLMENTS:')
-    successfulEnrollments.forEach((result, index) => {
-      console.log(`  ${index + 1}. "${result.courseName}" - ${result.originalPrice} (${result.category})`)
+    if (failureCount > 0) {
+      const errorMessage = `${failureCount} out of ${enrollmentResults.length} enrollments failed. Check logs for details.`
+      console.log(`❌ ENROLLMENT PROCESS PARTIALLY FAILED: ${errorMessage}`)
+      // Don't throw error - partial success is acceptable
+    } else {
+      console.log('🎉 === ALL COURSES ENROLLED AND SAVED TO DATABASE SUCCESSFULLY! ===\n')
+    }
+
+  } catch (databaseError) {
+    console.error('❌ DATABASE OPERATION FAILED:', {
+      error: databaseError instanceof Error ? databaseError.message : 'Unknown error',
+      stack: databaseError instanceof Error ? databaseError.stack : undefined
     })
+    throw databaseError
   }
-
-  if (failedEnrollments.length > 0) {
-    console.log('❌ FAILED ENROLLMENTS:')
-    failedEnrollments.forEach((result, index) => {
-      console.log(`  ${index + 1}. "${result.courseName}" - ${result.originalPrice} (${result.category}) - Error: ${result.error || 'Unknown'}`)
-    })
-  }
-
-  if (failureCount > 0) {
-    const errorMessage = `${failureCount} out of ${enrollmentResults.length} enrollments failed. Check logs for details.`
-    console.log(`❌ ENROLLMENT PROCESS FAILED: ${errorMessage}`)
-    throw new Error(errorMessage)
-  }
-
-  console.log('🎉 === ALL COURSES ENROLLED SUCCESSFULLY! ===\n')
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse<WebhookResponse>> {
@@ -724,50 +829,51 @@ export async function POST(req: NextRequest): Promise<NextResponse<WebhookRespon
 
       default:
         console.log(`\n❓ === UNHANDLED EVENT TYPE: ${event.type} ===`)
-        console.log('Event will be acknowledged but not processed')
-    }
+        console.log(`\n❓ === UNHANDLED EVENT TYPE: ${event.type} ===`)
+       console.log('Event will be acknowledged but not processed')
+   }
 
-    console.log('\n✅ === WEBHOOK PROCESSING COMPLETED SUCCESSFULLY ===')
-    return NextResponse.json({ 
-      received: true,
-      eventId: event.id,
-      eventType: event.type 
-    })
+   console.log('\n✅ === WEBHOOK PROCESSING COMPLETED SUCCESSFULLY ===')
+   return NextResponse.json({ 
+     received: true,
+     eventId: event.id,
+     eventType: event.type 
+   })
 
-  } catch (error) {
-    console.error('\n❌ === WEBHOOK PROCESSING ERROR ===')
-    console.error('Processing error details:', {
-      eventId: event.id,
-      eventType: event.type,
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-    })
-    
-    return NextResponse.json(
-      { error: 'Webhook processing failed' },
-      { status: 500 }
-    )
-  }
+ } catch (error) {
+   console.error('\n❌ === WEBHOOK PROCESSING ERROR ===')
+   console.error('Processing error details:', {
+     eventId: event.id,
+     eventType: event.type,
+     error: error instanceof Error ? error.message : 'Unknown error',
+     stack: error instanceof Error ? error.stack : undefined,
+   })
+   
+   return NextResponse.json(
+     { error: 'Webhook processing failed' },
+     { status: 500 }
+   )
+ }
 }
 
 // Only allow POST requests
 export async function GET(): Promise<NextResponse> {
-  return NextResponse.json(
-    { error: 'Method not allowed' },
-    { status: 405 }
-  )
+ return NextResponse.json(
+   { error: 'Method not allowed' },
+   { status: 405 }
+ )
 }
 
 export async function PUT(): Promise<NextResponse> {
-  return NextResponse.json(
-    { error: 'Method not allowed' },
-    { status: 405 }
-  )
+ return NextResponse.json(
+   { error: 'Method not allowed' },
+   { status: 405 }
+ )
 }
 
 export async function DELETE(): Promise<NextResponse> {
-  return NextResponse.json(
-    { error: 'Method not allowed' },
-    { status: 405 }
-  )
+ return NextResponse.json(
+   { error: 'Method not allowed' },
+   { status: 405 }
+ )
 }
