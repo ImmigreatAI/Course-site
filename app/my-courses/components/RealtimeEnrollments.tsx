@@ -192,7 +192,8 @@ export function RealtimeEnrollments({
             }`}
           >
             {enrollment.status === 'active' ? (
-              <a href={enrollment.course_url} target="_blank" rel="noopener noreferrer">
+              // <a href={enrollment.course_url} target="_blank" rel="noopener noreferrer">
+              <a href={enrollment.course_url} >
                 <ExternalLink className="w-4 h-4 mr-2" />
                 Access Course
               </a>

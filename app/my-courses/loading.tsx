@@ -1,3 +1,4 @@
+//app/my-courses/loading.tsx
 import { Loader2 } from 'lucide-react'
 
 export default function Loading() {

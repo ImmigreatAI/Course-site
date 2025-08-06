@@ -1,3 +1,4 @@
+//app/courses/page.tsx
 import { CourseCard } from '@/components/CourseCard'
 import { getAllCourses } from '@/lib/data/courses'
 

@@ -1,3 +1,4 @@
+//app/api/user/enrollments/route.ts
 import { auth } from '@clerk/nextjs/server'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'

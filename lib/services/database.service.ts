@@ -1,3 +1,4 @@
+// lib/services/database.service.ts
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { Database } from '@/types/supabase'
 
