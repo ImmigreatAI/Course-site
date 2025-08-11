@@ -6,7 +6,7 @@ import { coursesData, type CourseData } from '@/lib/data/courses'
 export interface CartItem {
   courseId: string // Unique_id from course data
   courseName: string
-  planLabel: string // "6mo" or "7day"
+  planLabel: string // "6mo" or "7days"
   price: number
   enrollmentId: string
   stripePriceId: string
