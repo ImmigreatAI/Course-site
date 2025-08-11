@@ -14,6 +14,113 @@ export type Database = {
   }
   public: {
     Tables: {
+      bundle_items: {
+        Row: {
+          bundle_course_id: string
+          child_course_id: string
+          created_at: string
+        }
+        Insert: {
+          bundle_course_id: string
+          child_course_id: string
+          created_at?: string
+        }
+        Update: {
+          bundle_course_id?: string
+          child_course_id?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bundle_items_bundle_course_id_fkey"
+            columns: ["bundle_course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bundle_items_child_course_id_fkey"
+            columns: ["child_course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      course_plans: {
+        Row: {
+          category: string
+          course_id: string
+          created_at: string
+          enrollment_id: string
+          id: string
+          label: string
+          price: number
+          stripe_price_id: string
+          type: string
+        }
+        Insert: {
+          category: string
+          course_id: string
+          created_at?: string
+          enrollment_id: string
+          id?: string
+          label: string
+          price?: number
+          stripe_price_id: string
+          type: string
+        }
+        Update: {
+          category?: string
+          course_id?: string
+          created_at?: string
+          enrollment_id?: string
+          id?: string
+          label?: string
+          price?: number
+          stripe_price_id?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "course_plans_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      courses: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_bundle: boolean
+          name: string
+          unique_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_bundle?: boolean
+          name: string
+          unique_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_bundle?: boolean
+          name?: string
+          unique_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       enrollments: {
         Row: {
           course_id: string

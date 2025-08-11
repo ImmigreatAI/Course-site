@@ -2,8 +2,9 @@
 // ============================================
 // Service for managing user course access and purchase validation
 
+import { courseCatalogService } from '@/lib/services/course-catalog.service'
 import { databaseService } from '@/lib/services/database.service'
-import { coursesData, type CourseData } from '@/lib/data/courses'
+import { coursesData, type CourseData } from '@/lib/data/courses' // kept for sync helpers to avoid breaking callers
 import type { CartItem } from '@/lib/store/cart-store'
 
 export interface CourseWithAccess extends CourseData {
@@ -33,60 +34,66 @@ export class UserCoursesService {
 
   /**
    * Enrich courses with user access status
+   * Uses DB-backed catalog (courseCatalogService)
    */
   async getCoursesWithAccessStatus(
     userId: string | null
   ): Promise<CourseWithAccess[]> {
-    // If no user, all courses are not purchased
+    // Always load catalog from DB (cached with tags)
+    const catalog = await courseCatalogService.getAllCourses()
+
+    // If no user, mark everything as not purchased
     if (!userId) {
-      return coursesData.map(course => ({
+      return catalog.map(course => ({
         ...course,
         isPurchased: false,
-        activeEnrollment: false
+        activeEnrollment: false,
       }))
     }
 
     try {
       // Get user's purchased course IDs
       const purchasedCourseIds = await this.getUserPurchasedCourseIds(userId)
-      
+
       // Get detailed enrollment info for purchased courses
       const enrollmentMap = await databaseService.getUserEnrollmentsByCourseIds(
         userId,
         purchasedCourseIds
       )
 
-      // Map courses with access status
-      return coursesData.map(course => {
+      // Map catalog with access flags
+      return catalog.map(course => {
         const courseId = course.course.Unique_id
         const isPurchased = purchasedCourseIds.includes(courseId)
         const enrollment = enrollmentMap.get(courseId)
-        
+
         // Check if enrollment is active and not expired
         const isActive = enrollment?.status === 'active'
-        const isNotExpired = !enrollment?.expires_at || 
+        const isNotExpired =
+          !enrollment?.expires_at ||
           new Date(enrollment.expires_at) > new Date()
-        
+
         return {
           ...course,
           isPurchased,
           activeEnrollment: isPurchased && isActive && isNotExpired,
-          expiresAt: enrollment?.expires_at
+          expiresAt: enrollment?.expires_at ?? null,
         }
       })
     } catch (error) {
       console.error('Error enriching courses with access status:', error)
-      // Fallback to all courses not purchased
-      return coursesData.map(course => ({
+      // Fallback: still return catalog, but mark as not purchased
+      return catalog.map(course => ({
         ...course,
         isPurchased: false,
-        activeEnrollment: false
+        activeEnrollment: false,
       }))
     }
   }
 
   /**
    * Validate cart items against user's purchases
+   * Uses DB-backed catalog for bundle membership checks
    */
   async validateCartAgainstPurchases(
     cartItems: CartItem[],
@@ -96,42 +103,43 @@ export class UserCoursesService {
     if (!userId) {
       return {
         isValid: true,
-        conflictingItems: []
+        conflictingItems: [],
       }
     }
 
     try {
       const purchasedCourseIds = await this.getUserPurchasedCourseIds(userId)
-      
-      // Check for bundles that include purchased courses
-      const bundlesWithPurchasedCourses = this.checkBundleConflicts(
+
+      // Check for bundles in cart that include already-purchased courses
+      const bundlesWithPurchasedCourses = await this.checkBundleConflicts(
         cartItems,
         purchasedCourseIds
       )
 
-      // Find items that are already purchased
-      const directConflicts = cartItems.filter(item => 
+      // Find direct duplicates (exact course already owned)
+      const directConflicts = cartItems.filter(item =>
         purchasedCourseIds.includes(item.courseId)
       )
 
-      // Combine all conflicts
       const conflictingItems = [
         ...directConflicts,
-        ...bundlesWithPurchasedCourses
+        ...bundlesWithPurchasedCourses,
       ]
 
       if (conflictingItems.length > 0) {
-        const itemNames = conflictingItems.map(item => item.courseName).join(', ')
+        const itemNames = conflictingItems
+          .map(item => item.courseName)
+          .join(', ')
         return {
           isValid: false,
           conflictingItems,
-          message: `You already own these courses: ${itemNames}. Please remove them from your cart to continue.`
+          message: `You already own these courses: ${itemNames}. Please remove them from your cart to continue.`,
         }
       }
 
       return {
         isValid: true,
-        conflictingItems: []
+        conflictingItems: [],
       }
     } catch (error) {
       console.error('Error validating cart:', error)
@@ -139,36 +147,38 @@ export class UserCoursesService {
       return {
         isValid: true,
         conflictingItems: [],
-        message: 'Unable to validate cart items. Please verify your purchases before checkout.'
+        message:
+          'Unable to validate cart items. Please verify your purchases before checkout.',
       }
     }
   }
 
   /**
    * Check if any bundles in cart contain already purchased courses
+   * Uses DB-backed catalog (courseCatalogService)
    */
-  private checkBundleConflicts(
+  private async checkBundleConflicts(
     cartItems: CartItem[],
     purchasedCourseIds: string[]
-  ): CartItem[] {
+  ): Promise<CartItem[]> {
+    const catalog = await courseCatalogService.getAllCourses()
+    const byUniqueId = new Map(catalog.map(c => [c.course.Unique_id, c]))
+
     const conflictingBundles: CartItem[] = []
 
     for (const item of cartItems) {
-      const courseData = coursesData.find(c => c.course.Unique_id === item.courseId)
-      
-      // Check if this is a bundle
-      const isBundle = courseData?.plans.some(plan => plan.category === 'bundle')
-      
-      if (isBundle && courseData?.course.package) {
-        // Check if any course in the bundle is already purchased
-        const bundleContents = courseData.course.package
-        const hasConflict = bundleContents.some(courseId => 
-          purchasedCourseIds.includes(courseId)
+      const courseData = byUniqueId.get(item.courseId)
+      if (!courseData) continue
+
+      const isBundle = courseData.plans.some(p => p.category === 'bundle')
+      const bundleContents = courseData.course.package ?? []
+
+      if (isBundle && bundleContents.length > 0) {
+        // If any child is already purchased, this bundle conflicts
+        const hasConflict = bundleContents.some(id =>
+          purchasedCourseIds.includes(id)
         )
-        
-        if (hasConflict) {
-          conflictingBundles.push(item)
-        }
+        if (hasConflict) conflictingBundles.push(item)
       }
     }
 
@@ -177,20 +187,22 @@ export class UserCoursesService {
 
   /**
    * Check if a specific course can be added to cart
+   * NOTE: kept synchronous to avoid breaking existing callers.
+   *       Uses the static snapshot for now; you can migrate later if needed.
    */
   canAddCourseToCart(
     courseId: string,
     purchasedCourseIds: string[]
   ): { canAdd: boolean; reason?: string } {
-    // Check if course is already purchased
+    // Already purchased?
     if (purchasedCourseIds.includes(courseId)) {
       return {
         canAdd: false,
-        reason: 'You already own this course'
+        reason: 'You already own this course',
       }
     }
 
-    // Check if course is part of a purchased bundle
+    // Is it part of any purchased bundle?
     const purchasedBundles = coursesData.filter(course => {
       const isBundle = course.plans.some(plan => plan.category === 'bundle')
       return isBundle && purchasedCourseIds.includes(course.course.Unique_id)
@@ -200,7 +212,7 @@ export class UserCoursesService {
       if (bundle.course.package?.includes(courseId)) {
         return {
           canAdd: false,
-          reason: `You already own this course as part of the ${bundle.course.name} bundle`
+          reason: `You already own this course as part of the ${bundle.course.name} bundle`,
         }
       }
     }
@@ -210,6 +222,8 @@ export class UserCoursesService {
 
   /**
    * Get course access URL for enrolled courses
+   * NOTE: kept synchronous using static snapshot to avoid breaking any callers.
+   *       (Your DB catalog currently returns '#', so this is harmless.)
    */
   getCourseAccessUrl(courseId: string, planLabel: string): string {
     const courseData = coursesData.find(c => c.course.Unique_id === courseId)
