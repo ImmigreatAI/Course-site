@@ -23,9 +23,9 @@ export default async function MyCoursesPage() {
       <div className="min-h-screen bg-gradient-to-br from-purple-50/30 via-white to-pink-50/30">
         <div className="max-w-4xl mx-auto px-4 py-16 text-center">
           <h1 className="text-2xl font-bold text-gray-900 mb-4">
-            Setting up your account...
+            You have no courses enrolled please visit the courses page to explore available courses.
           </h1>
-          <p className="text-gray-600">Please refresh the page in a moment.</p>
+          <p className="text-gray-600">if you have purchased recently , not able to finde it here. Please refresh the page </p>
         </div>
       </div>
     )
