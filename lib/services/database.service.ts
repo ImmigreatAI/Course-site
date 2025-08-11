@@ -60,7 +60,7 @@ export class DatabaseService {
   // Read operations using anon key
   async getUserByClerkId(clerkUserId: string): Promise<User | null> {
     const supabase = this.getReadClient()
-    
+    console.log('Fetching user by Clerk ID:', clerkUserId)
     const { data, error } = await supabase
       .from('users')
       .select('*')
@@ -68,6 +68,7 @@ export class DatabaseService {
       .single()
 
     if (error && error.code !== 'PGRST116') throw error
+    console.log('User fetched:', data)
     return data
   }
 
