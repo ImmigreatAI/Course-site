@@ -1,6 +1,9 @@
+// app/api/revalidate/route.ts
 import { NextRequest } from 'next/server'
-import { revalidateTag } from 'next/cache'
+import { revalidateTag, revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
+
+export const runtime = 'nodejs' // <-- IMPORTANT: revalidateTag/Path require Node runtime
 
 interface WebhookPayload {
   table?: string
@@ -41,6 +44,12 @@ async function getUniqueIdsByCourseIds(courseIds: (string | null | undefined)[])
   return (data ?? []).map(r => r.unique_id).filter(Boolean)
 }
 
+function revalidateCommonPages() {
+  // Pages that render courses (list and any featured usage on home)
+  revalidatePath('/courses', 'page')
+  revalidatePath('/', 'page') // if homepage shows featured courses
+}
+
 export async function POST(req: NextRequest) {
   const secret = req.headers.get('x-revalidate-token')
   if (!secret || secret !== process.env.REVALIDATE_TOKEN) {
@@ -59,32 +68,50 @@ export async function POST(req: NextRequest) {
   const record = body.record ?? body.new ?? null
   const oldRecord = body.old_record ?? body.old ?? null
 
-  // Always refresh the list page cache
+  // Always refresh the list data cache
   revalidateTag('courses')
+  revalidateCommonPages()
 
   try {
     switch (table) {
       case 'courses': {
-        const uniqueId = (record?.unique_id as string) ?? (oldRecord?.unique_id as string) ?? null
+        const uniqueId =
+          (record?.unique_id as string | undefined) ??
+          (oldRecord?.unique_id as string | undefined) ??
+          null
         if (uniqueId) {
           revalidateTag(`course:${uniqueId}`)
-          if (record?.is_bundle || oldRecord?.is_bundle) {
+          // If this course is/was a bundle, refresh bundle tag too
+          if ((record?.is_bundle as boolean | undefined) || (oldRecord?.is_bundle as boolean | undefined)) {
             revalidateTag(`bundle:${uniqueId}`)
           }
+          revalidateCommonPages()
         }
         break
       }
 
       case 'course_plans': {
-        const courseId = (record?.course_id as string) ?? (oldRecord?.course_id as string) ?? null
+        const courseId =
+          (record?.course_id as string | undefined) ??
+          (oldRecord?.course_id as string | undefined) ??
+          null
         const uniqueId = await getUniqueIdByCourseId(courseId)
-        if (uniqueId) revalidateTag(`course:${uniqueId}`)
+        if (uniqueId) {
+          revalidateTag(`course:${uniqueId}`)
+          revalidateCommonPages()
+        }
         break
       }
 
       case 'bundle_items': {
-        const bundleId = (record?.bundle_course_id as string) ?? (oldRecord?.bundle_course_id as string) ?? null
-        const childId = (record?.child_course_id as string) ?? (oldRecord?.child_course_id as string) ?? null
+        const bundleId =
+          (record?.bundle_course_id as string | undefined) ??
+          (oldRecord?.bundle_course_id as string | undefined) ??
+          null
+        const childId  =
+          (record?.child_course_id as string | undefined)  ??
+          (oldRecord?.child_course_id as string | undefined)  ??
+          null
 
         const [bundleUniqueIds, childUniqueIds] = await Promise.all([
           getUniqueIdsByCourseIds([bundleId]),
@@ -98,6 +125,7 @@ export async function POST(req: NextRequest) {
         for (const cid of childUniqueIds) {
           revalidateTag(`course:${cid}`)
         }
+        revalidateCommonPages()
         break
       }
 

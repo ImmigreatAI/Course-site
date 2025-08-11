@@ -4,12 +4,23 @@
 │   ├── about
 │   │   └── page.tsx
 │   ├── api
-│   │   └── stripe
-│   │       ├── checkout
-│   │       │   └── route.ts
-│   │       └── webhook
-│   │           ├── clerk
-│   │           │   └── route.ts
+│   │   ├── cart
+│   │   │   └── validate
+│   │   │       └── route.ts
+│   │   ├── debug
+│   │   │   └── test-db
+│   │   │       └── route.ts
+│   │   ├── revalidate
+│   │   │   └── route.ts
+│   │   ├── stripe
+│   │   │   ├── checkout
+│   │   │   │   └── route.ts
+│   │   │   └── webhook
+│   │   │       ├── clerk
+│   │   │       │   └── route.ts
+│   │   │       └── route.ts
+│   │   └── user
+│   │       └── purchases
 │   │           └── route.ts
 │   ├── cancel
 │   │   └── page.tsx
@@ -36,14 +47,22 @@
 ├── components
 │   ├── CartDropdown.tsx
 │   ├── CartIcon.tsx
+│   ├── CourseAccessIndicator.tsx
 │   ├── CourseCard.tsx
+│   ├── CourseCardSkeleton.tsx
+│   ├── CourseListWrapper.tsx
+│   ├── CourseProgressBar.tsx
 │   ├── Navbar.tsx
+│   ├── PurchaseConflictModal.tsx
+│   ├── PurchasedCoursesProvider.tsx
+│   ├── QuickAccessButton.tsx
 │   └── ui
 │       ├── alert.tsx
 │       ├── avatar.tsx
 │       ├── badge.tsx
 │       ├── button.tsx
 │       ├── card.tsx
+│       ├── dialog.tsx
 │       ├── dropdown-menu.tsx
 │       ├── input.tsx
 │       ├── label.tsx
@@ -57,16 +76,19 @@
 │   ├── data
 │   │   └── courses.ts
 │   ├── hooks
-│   │   └── use-cart-hydration.ts
+│   │   ├── use-cart-hydration.ts
+│   │   └── use-user-purchases.ts
 │   ├── services
 │   │   ├── cache.service.ts
 │   │   ├── checkout-session.service.ts
 │   │   ├── checkout-validation.service.ts
 │   │   ├── checkout.service.ts
+│   │   ├── course-catalog.service.ts
 │   │   ├── database.service.ts
 │   │   ├── enrollment.service.ts
 │   │   ├── learnworlds.service.ts
 │   │   ├── my-courses.service.ts
+│   │   ├── user-courses.service.ts
 │   │   └── webhook.service.ts
 │   ├── store
 │   │   └── cart-store.ts
@@ -74,6 +96,7 @@
 │   │   └── config.ts
 │   ├── supabase
 │   │   ├── admin.ts
+│   │   ├── anon.ts
 │   │   ├── client.ts
 │   │   └── server.ts
 │   ├── types
@@ -103,4 +126,4 @@
     ├── index.ts
     └── supabase.ts
 
-28 directories, 76 files
+35 directories, 92 files

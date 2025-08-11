@@ -3,18 +3,16 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-// Protected app routes (must be signed in)
+// Protect only specific app routes
 const isProtectedRoute = createRouteMatcher(['/my-courses(.*)'])
 
-// Public API routes that must bypass auth (e.g. Supabase webhooks)
+// Public API routes (no auth)
 const isPublicApiRoute = createRouteMatcher([
-  '/api/revalidate',        // ← revalidation webhook
-  // add more if needed (e.g. Stripe webhooks):
-  // '/api/stripe/webhook',
+  '/api/revalidate', // Supabase webhook
 ])
 
 export default clerkMiddleware(async (auth, req: NextRequest) => {
-  // 1) Let public API routes pass through with NO auth
+  // 1) Allow public API routes
   if (isPublicApiRoute(req)) {
     return NextResponse.next()
   }
@@ -24,18 +22,15 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
     await auth.protect()
   }
 
-  // 3) Attach Clerk user id header for RLS-enabled backends
+  // 3) Attach Clerk user id header for everything else
   const { userId } = await auth()
   const res = NextResponse.next()
-  if (userId) {
-    res.headers.set('x-clerk-user-id', userId)
-  }
+  if (userId) res.headers.set('x-clerk-user-id', userId)
   return res
 })
 
 export const config = {
   matcher: [
-    // Run middleware on all pages except static assets, and on API routes
     '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
     '/(api|trpc)(.*)',
   ],
