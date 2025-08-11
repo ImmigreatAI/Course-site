@@ -4,17 +4,13 @@
 │   ├── about
 │   │   └── page.tsx
 │   ├── api
-│   │   ├── stripe
-│   │   │   ├── checkout
-│   │   │   │   └── route.ts
-│   │   │   └── webhook
-│   │   │       ├── clerk
-│   │   │       │   └── route.ts
-│   │   │       └── route.ts
-│   │   ├── user
-│   │   │   └── enrollments
-│   │   │       └── route.ts
-│   │   └── webhooks
+│   │   └── stripe
+│   │       ├── checkout
+│   │       │   └── route.ts
+│   │       └── webhook
+│   │           ├── clerk
+│   │           │   └── route.ts
+│   │           └── route.ts
 │   ├── cancel
 │   │   └── page.tsx
 │   ├── contact
@@ -26,6 +22,9 @@
 │   ├── layout.tsx
 │   ├── my-courses
 │   │   ├── components
+│   │   │   ├── EnrollmentCard.tsx
+│   │   │   ├── EnrollmentList.tsx
+│   │   │   ├── PurchaseHistory.tsx
 │   │   │   └── RealtimeEnrollments.tsx
 │   │   ├── error.tsx
 │   │   ├── loading.tsx
@@ -61,9 +60,13 @@
 │   │   └── use-cart-hydration.ts
 │   ├── services
 │   │   ├── cache.service.ts
+│   │   ├── checkout-session.service.ts
+│   │   ├── checkout-validation.service.ts
+│   │   ├── checkout.service.ts
 │   │   ├── database.service.ts
 │   │   ├── enrollment.service.ts
 │   │   ├── learnworlds.service.ts
+│   │   ├── my-courses.service.ts
 │   │   └── webhook.service.ts
 │   ├── store
 │   │   └── cart-store.ts
@@ -73,6 +76,9 @@
 │   │   ├── admin.ts
 │   │   ├── client.ts
 │   │   └── server.ts
+│   ├── types
+│   │   ├── checkout.types.ts
+│   │   └── enrollment.types.ts
 │   └── utils.ts
 ├── middleware.ts
 ├── next-env.d.ts
@@ -97,4 +103,4 @@
     ├── index.ts
     └── supabase.ts
 
-30 directories, 68 files
+28 directories, 76 files
