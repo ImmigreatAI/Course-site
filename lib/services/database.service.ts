@@ -1,5 +1,9 @@
-// lib/services/database.service.ts
-import { createAdminClient } from '@/lib/supabase/admin'
+// lib/services/database.service.ts (SIMPLIFIED FIX)
+// ============================================
+// Use a simpler approach - just use the anon key for reads
+// This avoids the cookies import issue
+
+import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/supabase'
 
 type Tables = Database['public']['Tables']
@@ -8,24 +12,111 @@ type Purchase = Tables['purchases']['Row']
 type PurchaseItem = Tables['purchase_items']['Row']
 type Enrollment = Tables['enrollments']['Row']
 
-export class DatabaseService {
-  private supabase = createAdminClient()
+// Create a simple server client without cookies
+function createSimpleServerClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-  // User operations
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Missing Supabase environment variables')
+  }
+
+  return createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    }
+  })
+}
+
+// Create admin client for write operations
+function createAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error('Missing Supabase admin environment variables')
+  }
+
+  return createClient<Database>(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    }
+  })
+}
+
+export class DatabaseService {
+  // For read operations - use anon key (works everywhere)
+  private getReadClient() {
+    return createSimpleServerClient()
+  }
+
+  // For write operations - use service key (API routes only)
+  private getWriteClient() {
+    return createAdminClient()
+  }
+
+  // Read operations using anon key
+  async getUserByClerkId(clerkUserId: string): Promise<User | null> {
+    const supabase = this.getReadClient()
+    
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('clerk_user_id', clerkUserId)
+      .single()
+
+    if (error && error.code !== 'PGRST116') throw error
+    return data
+  }
+
+  async getUserEnrollments(userId: string): Promise<Enrollment[]> {
+    const supabase = this.getReadClient()
+    
+    const { data, error } = await supabase
+      .from('enrollments')
+      .select('*')
+      .eq('user_id', userId)
+      .order('enrolled_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  }
+
+  async getUserPurchaseHistory(userId: string) {
+    const supabase = this.getReadClient()
+    
+    const { data, error } = await supabase
+      .from('purchases')
+      .select(`
+        *,
+        purchase_items (*)
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    return data || []
+  }
+
+  // Write operations using service key (for API routes only)
   async createOrUpdateUser(data: {
     clerk_user_id: string
     email: string
-    full_name?: string | null  // Changed to accept null
-    username?: string | null   // Changed to accept null
+    full_name?: string | null
+    username?: string | null
     learnworlds_user_id?: string | null 
   }): Promise<User> {
-    const { data: user, error } = await this.supabase
+    const supabase = this.getWriteClient()
+    
+    const { data: user, error } = await supabase
       .from('users')
       .upsert({
         clerk_user_id: data.clerk_user_id,
         email: data.email,
-        full_name: data.full_name || null,  // Convert undefined to null
-        username: data.username || null,     // Convert undefined to null
+        full_name: data.full_name || null,
+        username: data.username || null,
         learnworlds_user_id: data.learnworlds_user_id || null, 
       }, {
         onConflict: 'clerk_user_id'
@@ -37,26 +128,16 @@ export class DatabaseService {
     return user
   }
 
-  async getUserByClerkId(clerkUserId: string): Promise<User | null> {
-    const { data, error } = await this.supabase
-      .from('users')
-      .select('*')
-      .eq('clerk_user_id', clerkUserId)
-      .single()
-
-    if (error && error.code !== 'PGRST116') throw error
-    return data
-  }
-
-  // Purchase operations
   async createPurchase(data: {
     user_id: string
     stripe_session_id: string
-    stripe_payment_intent_id?: string | null  // Accept null
+    stripe_payment_intent_id?: string | null
     amount: number
     currency: string
   }): Promise<Purchase> {
-    const { data: purchase, error } = await this.supabase
+    const supabase = this.getWriteClient()
+    
+    const { data: purchase, error } = await supabase
       .from('purchases')
       .insert({
         user_id: data.user_id,
@@ -76,12 +157,14 @@ export class DatabaseService {
   async createPurchaseItems(purchaseId: string, items: Array<{
     course_id: string
     course_name: string
-    plan_label: '6mo' | '7day'  // Ensure type matches
+    plan_label: '6mo' | '7day'
     price: number
     enrollment_id: string
     stripe_price_id: string
   }>): Promise<PurchaseItem[]> {
-    const { data, error } = await this.supabase
+    const supabase = this.getWriteClient()
+    
+    const { data, error } = await supabase
       .from('purchase_items')
       .insert(
         items.map(item => ({
@@ -96,7 +179,9 @@ export class DatabaseService {
   }
 
   async completePurchase(stripeSessionId: string): Promise<Purchase> {
-    const { data, error } = await this.supabase
+    const supabase = this.getWriteClient()
+    
+    const { data, error } = await supabase
       .from('purchases')
       .update({
         status: 'completed',
@@ -110,7 +195,6 @@ export class DatabaseService {
     return data
   }
 
-  // Enrollment operations
   async createEnrollment(data: {
     user_id: string
     purchase_item_id: string
@@ -120,7 +204,9 @@ export class DatabaseService {
     plan_label: string
     learnworlds_enrollment_id?: string | null
   }): Promise<Enrollment> {
-    const { data: enrollment, error } = await this.supabase
+    const supabase = this.getWriteClient()
+    
+    const { data: enrollment, error } = await supabase
       .from('enrollments')
       .insert({
         ...data,
@@ -134,32 +220,6 @@ export class DatabaseService {
 
     if (error) throw error
     return enrollment
-  }
-
-  async getUserEnrollments(userId: string): Promise<Enrollment[]> {
-    const { data, error } = await this.supabase
-      .from('enrollments')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('status', 'active')
-      .order('enrolled_at', { ascending: false })
-
-    if (error) throw error
-    return data || []
-  }
-
-  async getUserPurchaseHistory(userId: string) {
-    const { data, error } = await this.supabase
-      .from('purchases')
-      .select(`
-        *,
-        purchase_items (*)
-      `)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-
-    if (error) throw error
-    return data || []
   }
 
   private calculateExpiryDate(planLabel: string): string {

@@ -1,0 +1,100 @@
+.
+├──  test-db-with-env.ts
+├── app
+│   ├── about
+│   │   └── page.tsx
+│   ├── api
+│   │   ├── stripe
+│   │   │   ├── checkout
+│   │   │   │   └── route.ts
+│   │   │   └── webhook
+│   │   │       ├── clerk
+│   │   │       │   └── route.ts
+│   │   │       └── route.ts
+│   │   ├── user
+│   │   │   └── enrollments
+│   │   │       └── route.ts
+│   │   └── webhooks
+│   ├── cancel
+│   │   └── page.tsx
+│   ├── contact
+│   │   └── page.tsx
+│   ├── courses
+│   │   └── page.tsx
+│   ├── favicon.ico
+│   ├── globals.css
+│   ├── layout.tsx
+│   ├── my-courses
+│   │   ├── components
+│   │   │   └── RealtimeEnrollments.tsx
+│   │   ├── error.tsx
+│   │   ├── loading.tsx
+│   │   └── page.tsx
+│   ├── page.tsx
+│   └── success
+│       └── page.tsx
+├── bun.lock
+├── components
+│   ├── CartDropdown.tsx
+│   ├── CartIcon.tsx
+│   ├── CourseCard.tsx
+│   ├── Navbar.tsx
+│   └── ui
+│       ├── alert.tsx
+│       ├── avatar.tsx
+│       ├── badge.tsx
+│       ├── button.tsx
+│       ├── card.tsx
+│       ├── dropdown-menu.tsx
+│       ├── input.tsx
+│       ├── label.tsx
+│       ├── popover.tsx
+│       ├── tabs.tsx
+│       └── textarea.tsx
+├── components.json
+├── eslint.config.mjs
+├── lib
+│   ├── courseData.ts
+│   ├── data
+│   │   └── courses.ts
+│   ├── hooks
+│   │   └── use-cart-hydration.ts
+│   ├── services
+│   │   ├── cache.service.ts
+│   │   ├── database.service.ts
+│   │   ├── enrollment.service.ts
+│   │   ├── learnworlds.service.ts
+│   │   └── webhook.service.ts
+│   ├── store
+│   │   └── cart-store.ts
+│   ├── stripe
+│   │   └── config.ts
+│   ├── supabase
+│   │   ├── admin.ts
+│   │   ├── client.ts
+│   │   └── server.ts
+│   └── utils.ts
+├── middleware.ts
+├── next-env.d.ts
+├── next.config.ts
+├── package.json
+├── postcss.config.mjs
+├── public
+│   ├── file.svg
+│   ├── globe.svg
+│   ├── next.svg
+│   ├── vercel.svg
+│   └── window.svg
+├── README.md
+├── structure.txt
+├── supabase
+│   ├── config.toml
+│   └── migrations
+│       └── 001_initial_schema.sql
+├── test-db.ts
+├── tsconfig.json
+└── types
+    ├── index.ts
+    └── supabase.ts
+
+30 directories, 68 files
