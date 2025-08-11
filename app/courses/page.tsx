@@ -8,6 +8,8 @@ import { getAllCourses } from '@/lib/data/courses'
 import { userCoursesService } from '@/lib/services/user-courses.service'
 import { PurchasedCoursesProvider } from '@/components/PurchasedCoursesProvider'
 
+export const dynamic = 'force-dynamic';
+
 export default async function CoursesPage() {
   // Check authentication
   const { userId } = await auth()
