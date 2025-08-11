@@ -3,15 +3,25 @@ import { NextRequest } from 'next/server'
 import { revalidateTag, revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-export const runtime = 'nodejs' // <-- IMPORTANT: revalidateTag/Path require Node runtime
+export const runtime = 'nodejs' // ensure revalidateTag/revalidatePath run properly
+
+type JsonObj = Record<string, unknown>
 
 interface WebhookPayload {
   table?: string
   type?: string
-  record?: Record<string, unknown>
-  new?: Record<string, unknown>
-  old_record?: Record<string, unknown>
-  old?: Record<string, unknown>
+  record?: JsonObj
+  new?: JsonObj
+  old_record?: JsonObj
+  old?: JsonObj
+}
+
+function getString(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined
+}
+
+function getBool(v: unknown): boolean | undefined {
+  return typeof v === 'boolean' ? v : undefined
 }
 
 async function getUniqueIdByCourseId(courseId?: string | null): Promise<string | null> {
@@ -21,9 +31,11 @@ async function getUniqueIdByCourseId(courseId?: string | null): Promise<string |
     .from('courses')
     .select('unique_id')
     .eq('id', courseId)
-    .single()
+    .maybeSingle() // tolerate 0 rows (e.g., after DELETE)
+
   if (error) {
-    console.error('[revalidate] lookup unique_id by course_id failed:', error)
+    // Only unexpected errors will appear here; 0-row case gives error=null
+    console.error('[revalidate] lookup unique_id by course_id failed (unexpected):', error)
     return null
   }
   return data?.unique_id ?? null
@@ -37,25 +49,28 @@ async function getUniqueIdsByCourseIds(courseIds: (string | null | undefined)[])
     .from('courses')
     .select('id, unique_id')
     .in('id', ids)
+
   if (error) {
     console.error('[revalidate] batch lookup unique_ids failed:', error)
     return []
   }
-  return (data ?? []).map(r => r.unique_id).filter(Boolean)
+  return (data ?? []).map(r => (r as { unique_id?: string }).unique_id).filter(Boolean) as string[]
 }
 
 function revalidateCommonPages() {
-  // Pages that render courses (list and any featured usage on home)
+  // Pages that render or feature courses
   revalidatePath('/courses', 'page')
-  revalidatePath('/', 'page') // if homepage shows featured courses
+  revalidatePath('/', 'page')
 }
 
 export async function POST(req: NextRequest) {
+  // Basic auth with shared secret
   const secret = req.headers.get('x-revalidate-token')
   if (!secret || secret !== process.env.REVALIDATE_TOKEN) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
   }
 
+  // Parse body safely
   let body: WebhookPayload = {}
   try {
     body = (await req.json()) as WebhookPayload
@@ -65,53 +80,43 @@ export async function POST(req: NextRequest) {
 
   const table = body.table
   const type = body.type
-  const record = body.record ?? body.new ?? null
-  const oldRecord = body.old_record ?? body.old ?? null
+  const record: JsonObj | undefined = (body.record as JsonObj) ?? (body.new as JsonObj) ?? undefined
+  const oldRecord: JsonObj | undefined = (body.old_record as JsonObj) ?? (body.old as JsonObj) ?? undefined
 
-  // Always refresh the list data cache
+  // Always refresh list data + pages
   revalidateTag('courses')
   revalidateCommonPages()
 
   try {
     switch (table) {
       case 'courses': {
-        const uniqueId =
-          (record?.unique_id as string | undefined) ??
-          (oldRecord?.unique_id as string | undefined) ??
-          null
+        const uniqueId = getString(record?.unique_id) ?? getString(oldRecord?.unique_id) ?? null
+        const isBundleNow = getBool(record?.is_bundle)
+        const wasBundle    = getBool(oldRecord?.is_bundle)
+
         if (uniqueId) {
           revalidateTag(`course:${uniqueId}`)
-          // If this course is/was a bundle, refresh bundle tag too
-          if ((record?.is_bundle as boolean | undefined) || (oldRecord?.is_bundle as boolean | undefined)) {
+          if (isBundleNow || wasBundle) {
             revalidateTag(`bundle:${uniqueId}`)
           }
-          revalidateCommonPages()
         }
         break
       }
 
       case 'course_plans': {
-        const courseId =
-          (record?.course_id as string | undefined) ??
-          (oldRecord?.course_id as string | undefined) ??
-          null
+        // plan changes must refresh the parent course
+        const courseId = getString(record?.course_id) ?? getString(oldRecord?.course_id) ?? null
         const uniqueId = await getUniqueIdByCourseId(courseId)
         if (uniqueId) {
           revalidateTag(`course:${uniqueId}`)
-          revalidateCommonPages()
         }
         break
       }
 
       case 'bundle_items': {
-        const bundleId =
-          (record?.bundle_course_id as string | undefined) ??
-          (oldRecord?.bundle_course_id as string | undefined) ??
-          null
-        const childId  =
-          (record?.child_course_id as string | undefined)  ??
-          (oldRecord?.child_course_id as string | undefined)  ??
-          null
+        // bundle membership changes refresh bundle and affected child courses
+        const bundleId = getString(record?.bundle_course_id) ?? getString(oldRecord?.bundle_course_id) ?? null
+        const childId  = getString(record?.child_course_id)  ?? getString(oldRecord?.child_course_id)  ?? null
 
         const [bundleUniqueIds, childUniqueIds] = await Promise.all([
           getUniqueIdsByCourseIds([bundleId]),
@@ -125,7 +130,6 @@ export async function POST(req: NextRequest) {
         for (const cid of childUniqueIds) {
           revalidateTag(`course:${cid}`)
         }
-        revalidateCommonPages()
         break
       }
 
