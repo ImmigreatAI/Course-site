@@ -1,9 +1,67 @@
 // lib/services/checkout-validation.service.ts
 // ============================================
+// Enhanced with purchase validation
+
 import { coursesData } from '@/lib/data/courses'
+import { databaseService } from '@/lib/services/database.service'
 import type { CheckoutItem, ProcessedItem } from '@/lib/types/checkout.types'
 
 export class CheckoutValidationService {
+  /**
+   * Validate items against user's purchases
+   */
+  async validateAgainstPurchases(
+    items: CheckoutItem[],
+    userId: string
+  ): Promise<{ isValid: boolean; error?: string; conflictingItems?: string[] }> {
+    try {
+      // Get user's purchased course IDs
+      const purchasedCourseIds = await databaseService.getUserPurchasedCourseIds(userId)
+      
+      if (purchasedCourseIds.length === 0) {
+        return { isValid: true }
+      }
+
+      // Check for conflicts
+      const conflicts: string[] = []
+      
+      for (const item of items) {
+        if (purchasedCourseIds.includes(item.courseId)) {
+          conflicts.push(item.courseName)
+        }
+        
+        // Check if item is a bundle containing purchased courses
+        const course = coursesData.find(c => c.course.Unique_id === item.courseId)
+        const isBundle = course?.plans.some(p => p.category === 'bundle')
+        
+        if (isBundle && course?.course.package) {
+          const bundleContents = course.course.package
+          const purchasedInBundle = bundleContents.filter(id => 
+            purchasedCourseIds.includes(id)
+          )
+          
+          if (purchasedInBundle.length > 0) {
+            conflicts.push(`${item.courseName} (contains owned courses)`)
+          }
+        }
+      }
+      
+      if (conflicts.length > 0) {
+        return {
+          isValid: false,
+          error: `You already own these items: ${conflicts.join(', ')}. Please remove them from your cart.`,
+          conflictingItems: conflicts
+        }
+      }
+      
+      return { isValid: true }
+    } catch (error) {
+      console.error('Error validating against purchases:', error)
+      // Allow checkout to proceed but log the error
+      return { isValid: true }
+    }
+  }
+
   /**
    * Validate and process a single checkout item
    */
@@ -85,9 +143,13 @@ export class CheckoutValidationService {
   /**
    * Validate all checkout items
    */
-  validateItems(items: CheckoutItem[]): ProcessedItem[] | { error: string } {
+  async validateItems(
+    items: CheckoutItem[],
+    userId?: string
+  ): Promise<ProcessedItem[] | { error: string }> {
     const processedItems: ProcessedItem[] = []
     
+    // First validate each item's data
     for (const item of items) {
       const result = this.validateItem(item)
       
@@ -96,6 +158,15 @@ export class CheckoutValidationService {
       }
       
       processedItems.push(result)
+    }
+    
+    // Then validate against user's purchases if userId provided
+    if (userId) {
+      const purchaseValidation = await this.validateAgainstPurchases(items, userId)
+      
+      if (!purchaseValidation.isValid) {
+        return { error: purchaseValidation.error || 'Items already purchased' }
+      }
     }
     
     return processedItems

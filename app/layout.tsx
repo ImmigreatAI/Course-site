@@ -1,10 +1,15 @@
 // app/layout.tsx
+
 import type { Metadata } from "next";
 import { Inter, Pacifico } from "next/font/google";
 import "./globals.css";
+
 import { ClerkProvider } from '@clerk/nextjs'
-import { Navbar } from "@/components/Navbar";
+import { Navbar } from "@/components/Navbar"
 import { Toaster } from 'sonner'
+
+// ✅ NEW: add the conflict modal (client component)
+import { PurchaseConflictModal } from '@/components/PurchaseConflictModal'
 
 const inter = Inter({ 
   subsets: ['latin'],
@@ -25,17 +30,20 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
+
   return (
     <ClerkProvider>
       <html lang="en" className={pacifico.variable}>
         <body className={`${inter.className} antialiased`}>
           <Navbar />
+
+          {/* keep original spacing for your fixed navbar */}
           <main className="pt-20">
             {children}
           </main>
+
+          {/* keep original toaster styling/position */}
           <Toaster 
             position="top-right"
             toastOptions={{
@@ -44,6 +52,9 @@ export default function RootLayout({
             }}
             richColors
           />
+
+          {/* ✅ NEW: mounted once at root; opens only when cart has conflicts */}
+          <PurchaseConflictModal />
         </body>
       </html>
     </ClerkProvider>

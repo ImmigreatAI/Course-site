@@ -1,4 +1,4 @@
-//components/Navbar.tsx
+// components/Navbar.tsx
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
@@ -20,6 +20,9 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { CartIcon } from '@/components/CartIcon'
 import { CartDropdown } from '@/components/CartDropdown'
 
+// ⬇️ NEW: hook only for syncing purchased course IDs into cart-store post-login
+import { useUserPurchases } from '@/lib/hooks/use-user-purchases'
+
 export function Navbar() {
   const { isLoaded, isSignedIn, user } = useUser()
   const { signOut } = useClerk()
@@ -29,7 +32,11 @@ export function Navbar() {
   const [isCartOpen, setIsCartOpen] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
-  
+
+  // ⬇️ NEW: calling the hook triggers purchase sync & cart validation after login
+  // (no UI usage here to keep visuals identical)
+  useUserPurchases()
+
   const handleLogout = async () => {
     await signOut()
     router.push('/')

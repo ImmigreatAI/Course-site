@@ -1,7 +1,6 @@
-// lib/services/database.service.ts (SIMPLIFIED FIX)
+// lib/services/database.service.ts
 // ============================================
-// Use a simpler approach - just use the anon key for reads
-// This avoids the cookies import issue
+// Enhanced with user purchase validation methods
 
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/supabase'
@@ -60,7 +59,7 @@ export class DatabaseService {
   // Read operations using anon key
   async getUserByClerkId(clerkUserId: string): Promise<User | null> {
     const supabase = this.getReadClient()
-    console.log('Fetching user by Clerk ID:', clerkUserId)
+    
     const { data, error } = await supabase
       .from('users')
       .select('*')
@@ -68,7 +67,6 @@ export class DatabaseService {
       .single()
 
     if (error && error.code !== 'PGRST116') throw error
-    console.log('User fetched:', data)
     return data
   }
 
@@ -99,6 +97,91 @@ export class DatabaseService {
 
     if (error) throw error
     return data || []
+  }
+
+  // NEW: Get user's purchased course IDs (Unique_ids)
+  async getUserPurchasedCourseIds(userId: string): Promise<string[]> {
+    const supabase = this.getReadClient()
+    
+    try {
+      // First get the database user
+      const user = await this.getUserByClerkId(userId)
+      if (!user) return []
+
+      // Get all active enrollments with their course IDs
+      const { data, error } = await supabase
+        .from('enrollments')
+        .select(`
+          course_id,
+          status,
+          expires_at,
+          purchase_item:purchase_items!inner(
+            purchase:purchases!inner(
+              status
+            )
+          )
+        `)
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .eq('purchase_item.purchase.status', 'completed')
+
+      if (error) {
+        console.error('Error fetching purchased courses:', error)
+        return []
+      }
+
+      // Filter out expired enrollments and extract unique course IDs
+      const now = new Date()
+      const activeCourseIds = (data || [])
+        .filter(enrollment => {
+          if (!enrollment.expires_at) return true
+          return new Date(enrollment.expires_at) > now
+        })
+        .map(enrollment => enrollment.course_id)
+        .filter((id, index, self) => self.indexOf(id) === index) // Remove duplicates
+
+      return activeCourseIds
+    } catch (error) {
+      console.error('Error in getUserPurchasedCourseIds:', error)
+      return []
+    }
+  }
+
+  // NEW: Check if user has specific enrollments by course IDs
+  async getUserEnrollmentsByCourseIds(
+    userId: string, 
+    courseIds: string[]
+  ): Promise<Map<string, Enrollment | null>> {
+    const supabase = this.getReadClient()
+    
+    try {
+      const user = await this.getUserByClerkId(userId)
+      if (!user) return new Map()
+
+      const { data, error } = await supabase
+        .from('enrollments')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('course_id', courseIds)
+        .eq('status', 'active')
+
+      if (error) {
+        console.error('Error fetching enrollments by course IDs:', error)
+        return new Map()
+      }
+
+      // Create a map for easy lookup
+      const enrollmentMap = new Map<string, Enrollment | null>()
+      courseIds.forEach(id => {
+        const enrollment = data?.find(e => e.course_id === id) || null
+        enrollmentMap.set(id, enrollment)
+      })
+
+      return enrollmentMap
+    } catch (error) {
+      console.error('Error in getUserEnrollmentsByCourseIds:', error)
+      return new Map()
+    }
   }
 
   // Write operations using service key (for API routes only)

@@ -1,5 +1,7 @@
-// lib/services/checkout.service.ts (FIXED)
+// lib/services/checkout.service.ts
 // ============================================
+// Enhanced with purchase validation
+
 import { clerkClient } from '@clerk/nextjs/server'
 import { checkoutValidationService } from './checkout-validation.service'
 import { checkoutSessionService } from './checkout-session.service'
@@ -7,7 +9,7 @@ import type { CheckoutRequest, CheckoutResponse } from '@/lib/types/checkout.typ
 
 export class CheckoutService {
   /**
-   * Process checkout request
+   * Process checkout request with purchase validation
    */
   async processCheckout(
     userId: string,
@@ -15,16 +17,24 @@ export class CheckoutService {
     origin: string
   ): Promise<CheckoutResponse> {
     try {
+      console.log('🔒 Validating checkout for user:', userId)
+      
       // Get user info from Clerk
       const userInfo = await this.getUserInfo(userId)
       
-      // Validate all items
-      const validatedItems = checkoutValidationService.validateItems(request.items)
+      // Validate all items including purchase check
+      const validatedItems = await checkoutValidationService.validateItems(
+        request.items,
+        userId // Pass userId for purchase validation
+      )
       
       if ('error' in validatedItems) {
+        console.log('❌ Validation failed:', validatedItems.error)
         return { error: validatedItems.error }
       }
 
+      console.log('✅ Validation passed, creating Stripe session...')
+      
       // Create Stripe session
       const session = await checkoutSessionService.createSession(
         validatedItems,
