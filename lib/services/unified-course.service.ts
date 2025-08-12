@@ -1,12 +1,13 @@
 // lib/services/unified-course.service.ts
 // ============================================
-// Unified service that replaces static coursesData with database + computed properties
-// Extends existing course-catalog.service.ts pattern to handle ALL business logic
+// FULLY MIGRATED: Unified service with zero static data dependencies
+// Database-first with intelligent fallback and comprehensive error handling
 
 import { unstable_cache as cache } from 'next/cache'
 import { createAnonServerClient } from '@/lib/supabase/anon'
-import { coursesData, type CourseData } from '@/lib/data/courses' // Fallback only
+import type { CourseData } from '@/lib/data/courses' // Type import only - no data dependency
 import type { CartItem } from '@/lib/store/cart-store'
+
 interface ProcessedCheckoutItem {
   courseId: string
   courseName: string
@@ -17,6 +18,7 @@ interface ProcessedCheckoutItem {
   category: 'course' | 'bundle'
   url: string
 }
+
 type RawCourse = {
   id: string
   unique_id: string
@@ -41,8 +43,32 @@ type RawBundleItem = {
   child_course_id: string
 }
 
+// Emergency fallback data - minimal structure to prevent complete failure
+const EMERGENCY_FALLBACK: CourseData[] = [
+  {
+    course: {
+      Unique_id: "emergency-fallback",
+      name: "Service Unavailable",
+      description: "Database connection failed. Please try again later.",
+      package: []
+    },
+    plans: [{
+      url: "#",
+      category: "course",
+      type: "paid",
+      label: "6mo",
+      price: 0,
+      enrollment_id: "fallback",
+      stripe_price_id: "price_fallback"
+    }]
+  }
+]
+
 export class UnifiedCourseService {
-  private useDatabase = true // Feature flag for gradual migration
+  private useDatabase = true // Feature flag for migration control
+  private lastSuccessfulFetch: CourseData[] | null = null // Cache last known good data
+  private retryCount = 0
+  private maxRetries = 3
 
   /**
    * Cached fetch of the entire catalog (courses, plans, bundle items)
@@ -61,9 +87,9 @@ export class UnifiedCourseService {
         sb.from('bundle_items').select('*'),
       ])
 
-      if (ce) throw ce
-      if (pe) throw pe
-      if (be) throw be
+      if (ce) throw new Error(`Courses fetch failed: ${ce.message}`)
+      if (pe) throw new Error(`Plans fetch failed: ${pe.message}`)
+      if (be) throw new Error(`Bundles fetch failed: ${be.message}`)
 
       return {
         courses: (courses ?? []) as RawCourse[],
@@ -72,7 +98,7 @@ export class UnifiedCourseService {
       }
     },
     ['unified-catalog:all'],
-    { tags: ['courses'] }
+    { tags: ['courses'], revalidate: 300 } // 5 min cache
   )
 
   /**
@@ -89,63 +115,131 @@ export class UnifiedCourseService {
   }
 
   /**
-   * Convert raw DB rows to CourseData[] with proper URLs and all required properties
+   * Validate database response and convert to CourseData format
+   */
+  private validateAndTransformData(rawData: {
+    courses: RawCourse[]
+    plans: RawPlan[]
+    bundles: RawBundleItem[]
+  }): CourseData[] {
+    const { courses, plans, bundles } = rawData
+
+    // Validation checks
+    if (!Array.isArray(courses) || courses.length === 0) {
+      throw new Error('No courses found in database')
+    }
+
+    if (!Array.isArray(plans) || plans.length === 0) {
+      throw new Error('No course plans found in database')
+    }
+
+    // Validate required fields
+    for (const course of courses) {
+      if (!course.unique_id || !course.name) {
+        throw new Error(`Invalid course data: missing required fields for course ${course.id}`)
+      }
+    }
+
+    for (const plan of plans) {
+      if (!plan.course_id || !plan.label || !plan.enrollment_id || !plan.stripe_price_id) {
+        throw new Error(`Invalid plan data: missing required fields for plan ${plan.id}`)
+      }
+      if (!plan.stripe_price_id.startsWith('price_')) {
+        console.warn(`⚠️ Invalid Stripe price ID format: ${plan.stripe_price_id}`)
+      }
+    }
+
+    // Build course data structure
+    const idToUnique: Record<string, string> = {}
+    for (const c of courses) idToUnique[c.id] = c.unique_id
+
+    const plansByCourseId: Record<string, RawPlan[]> = {}
+    for (const p of plans) (plansByCourseId[p.course_id] ??= []).push(p)
+
+    const childrenByBundleId: Record<string, string[]> = {}
+    for (const bi of bundles) {
+      const childUnique = idToUnique[bi.child_course_id]
+      if (!childUnique) {
+        console.warn(`⚠️ Bundle relationship points to non-existent course: ${bi.child_course_id}`)
+        continue
+      }
+      ;(childrenByBundleId[bi.bundle_course_id] ??= []).push(childUnique)
+    }
+
+    return courses.map((c) => ({
+      course: {
+        Unique_id: c.unique_id,
+        name: c.name,
+        description: c.description ?? '',
+        package: c.is_bundle ? (childrenByBundleId[c.id] ?? []) : [],
+      },
+      plans: (plansByCourseId[c.id] ?? []).map((pl) => ({
+        url: this.generateCourseUrl(pl.category, pl.enrollment_id),
+        category: pl.category,
+        type: pl.type,
+        label: pl.label,
+        price: Number(pl.price),
+        enrollment_id: pl.enrollment_id,
+        stripe_price_id: pl.stripe_price_id,
+      })),
+    }))
+  }
+
+  /**
+   * Get all courses with intelligent fallback handling
    */
   async getAllCourses(): Promise<CourseData[]> {
-    // Feature flag: use static data during migration if needed
+    // Feature flag: disable database during migration if needed
     if (!this.useDatabase) {
-      console.log('🔄 Using static course data (migration mode)')
-      return coursesData
+      console.log('🔄 Database mode disabled - using emergency fallback')
+      return this.lastSuccessfulFetch || EMERGENCY_FALLBACK
     }
 
     try {
-      const { courses, plans, bundles } = await this.fetchAllRaw()
+      console.log('🔄 Fetching courses from database...')
+      
+      const rawData = await this.fetchAllRaw()
+      const transformedData = this.validateAndTransformData(rawData)
+      
+      // Success - reset retry count and cache the result
+      this.retryCount = 0
+      this.lastSuccessfulFetch = transformedData
+      
+      console.log(`✅ Successfully loaded ${transformedData.length} courses from database`)
+      return transformedData
 
-      // id(uuid) → unique_id map
-      const idToUnique: Record<string, string> = {}
-      for (const c of courses) idToUnique[c.id] = c.unique_id
+    } catch (error) {
+      this.retryCount++
+      console.error(`❌ Database error (attempt ${this.retryCount}/${this.maxRetries}):`, error)
 
-      // group plans by course uuid
-      const plansByCourseId: Record<string, RawPlan[]> = {}
-      for (const p of plans) (plansByCourseId[p.course_id] ??= []).push(p)
-
-      // bundle uuid → child unique_ids[]
-      const childrenByBundleId: Record<string, string[]> = {}
-      for (const bi of bundles) {
-        const childUnique = idToUnique[bi.child_course_id]
-        if (!childUnique) continue
-        ;(childrenByBundleId[bi.bundle_course_id] ??= []).push(childUnique)
+      // Use last successful fetch if available
+      if (this.lastSuccessfulFetch) {
+        console.log('🔄 Using cached course data from last successful fetch')
+        return this.lastSuccessfulFetch
       }
 
-      return courses.map((c) => ({
-        course: {
-          Unique_id: c.unique_id,
-          name: c.name,
-          description: c.description ?? '',
-          package: c.is_bundle ? (childrenByBundleId[c.id] ?? []) : [],
-        },
-        plans: (plansByCourseId[c.id] ?? []).map((pl) => ({
-          url: this.generateCourseUrl(pl.category, pl.enrollment_id), // ✨ Generated URLs
-          category: pl.category,
-          type: pl.type,
-          label: pl.label,
-          price: Number(pl.price),
-          enrollment_id: pl.enrollment_id,
-          stripe_price_id: pl.stripe_price_id,
-        })),
-      }))
-    } catch (error) {
-      console.error('❌ Database error, falling back to static data:', error)
-      return coursesData // Fallback to static data on error
+      // If we haven't hit max retries, throw to trigger retry logic upstream
+      if (this.retryCount < this.maxRetries) {
+        throw error
+      }
+
+      // Max retries reached - use emergency fallback
+      console.error('💥 Max retries reached, using emergency fallback')
+      return EMERGENCY_FALLBACK
     }
   }
 
   /**
-   * Get single course by unique_id - optimized for cart/validation operations
+   * Get single course by unique_id with error handling
    */
   async getCourseByUniqueId(uniqueId: string): Promise<CourseData | null> {
-    const allCourses = await this.getAllCourses()
-    return allCourses.find(c => c.course.Unique_id === uniqueId) || null
+    try {
+      const allCourses = await this.getAllCourses()
+      return allCourses.find(c => c.course.Unique_id === uniqueId) || null
+    } catch (error) {
+      console.error(`Error finding course ${uniqueId}:`, error)
+      return null
+    }
   }
 
   /**
@@ -159,25 +253,40 @@ export class UnifiedCourseService {
    * Check if course is a bundle (replaces static isBundle helper)
    */
   async isBundle(courseId: string): Promise<boolean> {
-    const courseData = await this.findCourseData(courseId)
-    return courseData?.plans.some(plan => plan.category === 'bundle') || false
+    try {
+      const courseData = await this.findCourseData(courseId)
+      return courseData?.plans.some(plan => plan.category === 'bundle') || false
+    } catch (error) {
+      console.error(`Error checking if ${courseId} is bundle:`, error)
+      return false
+    }
   }
 
   /**
    * Get bundle contents (replaces static getBundleContents helper)
    */
   async getBundleContents(bundleId: string): Promise<string[]> {
-    const courseData = await this.findCourseData(bundleId)
-    return courseData?.course.package || []
+    try {
+      const courseData = await this.findCourseData(bundleId)
+      return courseData?.course.package || []
+    } catch (error) {
+      console.error(`Error getting bundle contents for ${bundleId}:`, error)
+      return []
+    }
   }
 
   /**
    * Get course access URL for enrolled courses
    */
   async getCourseAccessUrl(courseId: string, planLabel: string): Promise<string> {
-    const courseData = await this.findCourseData(courseId)
-    const plan = courseData?.plans.find(p => p.label === planLabel)
-    return plan?.url || '#'
+    try {
+      const courseData = await this.findCourseData(courseId)
+      const plan = courseData?.plans.find(p => p.label === planLabel)
+      return plan?.url || '#'
+    } catch (error) {
+      console.error(`Error getting access URL for ${courseId}:`, error)
+      return '#'
+    }
   }
 
   /**
@@ -187,90 +296,96 @@ export class UnifiedCourseService {
     courseId: string,
     purchasedCourseIds: string[]
   ): Promise<{ canAdd: boolean; reason?: string }> {
-    // Already purchased?
-    if (purchasedCourseIds.includes(courseId)) {
-      return {
-        canAdd: false,
-        reason: 'You already own this course',
-      }
-    }
-
-    // Get all courses to check bundles
-    const allCourses = await this.getAllCourses()
-    
-    // Is it part of any purchased bundle?
-    const purchasedBundles = allCourses.filter(course => {
-      const isBundle = course.plans.some(plan => plan.category === 'bundle')
-      return isBundle && purchasedCourseIds.includes(course.course.Unique_id)
-    })
-
-    for (const bundle of purchasedBundles) {
-      if (bundle.course.package?.includes(courseId)) {
+    try {
+      // Already purchased?
+      if (purchasedCourseIds.includes(courseId)) {
         return {
           canAdd: false,
-          reason: `You already own this course as part of the ${bundle.course.name} bundle`,
+          reason: 'You already own this course',
         }
       }
-    }
 
-    return { canAdd: true }
+      // Get all courses to check bundles
+      const allCourses = await this.getAllCourses()
+      
+      // Is it part of any purchased bundle?
+      const purchasedBundles = allCourses.filter(course => {
+        const isBundle = course.plans.some(plan => plan.category === 'bundle')
+        return isBundle && purchasedCourseIds.includes(course.course.Unique_id)
+      })
+
+      for (const bundle of purchasedBundles) {
+        if (bundle.course.package?.includes(courseId)) {
+          return {
+            canAdd: false,
+            reason: `You already own this course as part of the ${bundle.course.name} bundle`,
+          }
+        }
+      }
+
+      return { canAdd: true }
+    } catch (error) {
+      console.error(`Error checking if can add ${courseId} to cart:`, error)
+      return { canAdd: false, reason: 'Unable to verify course availability' }
+    }
   }
 
   /**
    * Validate checkout item against database course data
    */
-    async validateCheckoutItem(item: {
+  async validateCheckoutItem(item: {
     courseId: string
     courseName: string
     planLabel: string
     price: number
     enrollmentId: string
     stripePriceId: string
-    }): Promise<{ isValid: boolean; error?: string; processedItem?: ProcessedCheckoutItem }> {
-    const course = await this.findCourseData(item.courseId)
-    
-    if (!course) {
-      return { 
-        isValid: false, 
-        error: `Course not found: ${item.courseId}` 
+  }): Promise<{ isValid: boolean; error?: string; processedItem?: ProcessedCheckoutItem }> {
+    try {
+      const course = await this.findCourseData(item.courseId)
+      
+      if (!course) {
+        return { 
+          isValid: false, 
+          error: `Course not found: ${item.courseId}` 
+        }
       }
-    }
 
-    // Find plan in course
-    const plan = course.plans.find(p => p.label === item.planLabel)
-    
-    if (!plan) {
-      return { 
-        isValid: false,
-        error: `Plan "${item.planLabel}" not found for course "${item.courseName}"` 
+      // Find plan in course
+      const plan = course.plans.find(p => p.label === item.planLabel)
+      
+      if (!plan) {
+        return { 
+          isValid: false,
+          error: `Plan "${item.planLabel}" not found for course "${item.courseName}"` 
+        }
       }
-    }
 
-    // Validate price matches
-    if (plan.price !== item.price) {
-      return { 
-        isValid: false,
-        error: `Price mismatch for "${item.courseName}". Expected: ${plan.price}, Received: ${item.price}` 
+      // Validate price matches
+      if (plan.price !== item.price) {
+        return { 
+          isValid: false,
+          error: `Price mismatch for "${item.courseName}". Expected: ${plan.price}, Received: ${item.price}` 
+        }
       }
-    }
 
-    // Validate enrollment ID matches
-    if (plan.enrollment_id !== item.enrollmentId) {
-      return { 
-        isValid: false,
-        error: `Enrollment ID mismatch for "${item.courseName}"` 
+      // Validate enrollment ID matches
+      if (plan.enrollment_id !== item.enrollmentId) {
+        return { 
+          isValid: false,
+          error: `Enrollment ID mismatch for "${item.courseName}"` 
+        }
       }
-    }
 
-    // Validate Stripe price ID format
-    if (!plan.stripe_price_id.startsWith('price_')) {
-      return { 
-        isValid: false,
-        error: `Invalid Stripe price ID format for course "${item.courseName}"` 
+      // Validate Stripe price ID format
+      if (!plan.stripe_price_id.startsWith('price_')) {
+        return { 
+          isValid: false,
+          error: `Invalid Stripe price ID format for course "${item.courseName}"` 
+        }
       }
-    }
 
-    const processedItem: ProcessedCheckoutItem = {
+      const processedItem: ProcessedCheckoutItem = {
         courseId: item.courseId,
         courseName: course.course.name,
         planLabel: item.planLabel,
@@ -278,13 +393,19 @@ export class UnifiedCourseService {
         enrollmentId: plan.enrollment_id,
         stripePriceId: plan.stripe_price_id,
         category: plan.category || 'course',
-        url: plan.url || ''
-        }
+        url: plan.url || '#'
+      }
 
-        return {
+      return {
         isValid: true,
         processedItem
-        }
+      }
+    } catch (error) {
+      return {
+        isValid: false,
+        error: `Validation error: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }
+    }
   }
 
   /**
@@ -298,58 +419,81 @@ export class UnifiedCourseService {
     conflictingItems: CartItem[]
     message?: string
   }> {
-    const conflictingItems: CartItem[] = []
-    
-    for (const item of cartItems) {
-      // Direct ownership check
-      if (purchasedCourseIds.includes(item.courseId)) {
-        conflictingItems.push(item)
-        continue
-      }
-
-      // Bundle conflict check
-      const isItemBundle = await this.isBundle(item.courseId)
+    try {
+      const conflictingItems: CartItem[] = []
       
-      if (isItemBundle) {
-        // Item is a bundle - check if user owns any child courses
-        const bundleContents = await this.getBundleContents(item.courseId)
-        const hasOwnedChildren = bundleContents.some(childId => 
-          purchasedCourseIds.includes(childId)
-        )
-        
-        if (hasOwnedChildren) {
+      for (const item of cartItems) {
+        // Direct ownership check
+        if (purchasedCourseIds.includes(item.courseId)) {
           conflictingItems.push(item)
+          continue
         }
-      } else {
-        // Item is a course - check if user owns bundles containing this course
-        const allCourses = await this.getAllCourses()
-        const ownedBundles = allCourses.filter(course => {
-          const courseIsBundle = course.plans.some(p => p.category === 'bundle')
-          return courseIsBundle && purchasedCourseIds.includes(course.course.Unique_id)
-        })
+
+        // Bundle conflict check
+        const isItemBundle = await this.isBundle(item.courseId)
         
-        for (const bundle of ownedBundles) {
-          if (bundle.course.package?.includes(item.courseId)) {
+        if (isItemBundle) {
+          // Item is a bundle - check if user owns any child courses
+          const bundleContents = await this.getBundleContents(item.courseId)
+          const hasOwnedChildren = bundleContents.some(childId => 
+            purchasedCourseIds.includes(childId)
+          )
+          
+          if (hasOwnedChildren) {
             conflictingItems.push(item)
-            break
+          }
+        } else {
+          // Item is a course - check if user owns bundles containing this course
+          const allCourses = await this.getAllCourses()
+          const ownedBundles = allCourses.filter(course => {
+            const courseIsBundle = course.plans.some(p => p.category === 'bundle')
+            return courseIsBundle && purchasedCourseIds.includes(course.course.Unique_id)
+          })
+          
+          for (const bundle of ownedBundles) {
+            if (bundle.course.package?.includes(item.courseId)) {
+              conflictingItems.push(item)
+              break
+            }
           }
         }
       }
-    }
 
-    if (conflictingItems.length > 0) {
-      const itemNames = conflictingItems.map(item => item.courseName).join(', ')
+      if (conflictingItems.length > 0) {
+        const itemNames = conflictingItems.map(item => item.courseName).join(', ')
+        return {
+          hasConflicts: true,
+          conflictingItems,
+          message: `You already own these courses: ${itemNames}. Please remove them from your cart to continue.`
+        }
+      }
+
       return {
-        hasConflicts: true,
-        conflictingItems,
-        message: `You already own these courses: ${itemNames}. Please remove them from your cart to continue.`
+        hasConflicts: false,
+        conflictingItems: []
+      }
+    } catch (error) {
+      console.error('Error checking cart conflicts:', error)
+      return {
+        hasConflicts: false,
+        conflictingItems: [],
+        message: 'Unable to verify cart conflicts - proceeding with caution'
       }
     }
+  }
 
-    return {
-      hasConflicts: false,
-      conflictingItems: []
-    }
+  /**
+   * Force refresh the cache
+   */
+  async refreshCache(): Promise<void> {
+    this.retryCount = 0
+    this.lastSuccessfulFetch = null
+    // Clear Next.js cache
+    await fetch('/api/revalidate', { 
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags: ['courses'] })
+    }).catch(console.error)
   }
 
   /**
@@ -357,43 +501,93 @@ export class UnifiedCourseService {
    */
   setDatabaseMode(enabled: boolean): void {
     this.useDatabase = enabled
-    console.log(`🔄 Course service mode: ${enabled ? 'Database' : 'Static'}`)
+    console.log(`🔄 Course service mode: ${enabled ? 'Database' : 'Emergency Fallback'}`)
   }
 
   /**
    * Health check - validates database connection and data integrity
    */
-  async healthCheck(): Promise<{ status: 'ok' | 'error'; message: string; courseCount?: number }> {
+  async healthCheck(): Promise<{ 
+    status: 'ok' | 'warning' | 'error'
+    message: string
+    courseCount?: number
+    retryCount?: number
+    lastSuccessfulFetch?: string
+    details?: {
+      responseTime?: string
+      retryCount?: number
+      cacheStatus?: string
+      [key: string]: unknown
+    }
+  }> {
     try {
+      const startTime = Date.now()
       const courses = await this.getAllCourses()
+      const responseTime = Date.now() - startTime
       
-      if (courses.length === 0) {
-        return { status: 'error', message: 'No courses found in database' }
+      // Check if using fallback data
+      if (courses === EMERGENCY_FALLBACK) {
+        return { 
+          status: 'error', 
+          message: 'Using emergency fallback data - database unavailable',
+          courseCount: courses.length,
+          retryCount: this.retryCount
+        }
       }
 
-      // Basic validation checks
+      if (courses === this.lastSuccessfulFetch && this.retryCount > 0) {
+        return {
+          status: 'warning',
+          message: 'Using cached data - database may be experiencing issues',
+          courseCount: courses.length,
+          retryCount: this.retryCount,
+          lastSuccessfulFetch: 'cached'
+        }
+      }
+
+      // Validate data quality
       const hasValidPlans = courses.every(c => c.plans.length > 0)
       const hasValidPrices = courses.every(c => 
         c.plans.every(p => p.stripe_price_id.startsWith('price_'))
       )
+      const hasValidUrls = courses.every(c =>
+        c.plans.every(p => p.url && p.url !== '#')
+      )
 
       if (!hasValidPlans) {
-        return { status: 'error', message: 'Some courses missing plans' }
+        return { status: 'error', message: 'Some courses missing plans', courseCount: courses.length }
       }
 
       if (!hasValidPrices) {
-        return { status: 'error', message: 'Some plans have invalid Stripe price IDs' }
+        return { 
+          status: 'warning', 
+          message: 'Some plans have invalid Stripe price IDs', 
+          courseCount: courses.length 
+        }
+      }
+
+      if (!hasValidUrls) {
+        return {
+          status: 'warning',
+          message: 'Some plans have placeholder URLs',
+          courseCount: courses.length
+        }
       }
 
       return { 
         status: 'ok', 
         message: 'All systems operational', 
-        courseCount: courses.length 
+        courseCount: courses.length,
+        details: {
+          responseTime: `${responseTime}ms`,
+          retryCount: this.retryCount
+        }
       }
     } catch (error) {
       return { 
         status: 'error', 
-        message: `Database error: ${error instanceof Error ? error.message : 'Unknown error'}` 
+        message: `Health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        retryCount: this.retryCount
       }
     }
   }

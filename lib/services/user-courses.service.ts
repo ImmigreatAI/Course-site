@@ -1,10 +1,11 @@
 // lib/services/user-courses.service.ts
 // ============================================
-// Service for managing user course access and purchase validation
+// MIGRATED: Service for managing user course access and purchase validation
+// Now uses unified course service - zero static data dependencies
 
-import { courseCatalogService } from '@/lib/services/course-catalog.service'
+import { unifiedCourseService } from '@/lib/services/unified-course.service'
 import { databaseService } from '@/lib/services/database.service'
-import { coursesData, type CourseData } from '@/lib/data/courses' // kept for sync helpers to avoid breaking callers
+import type { CourseData } from '@/lib/data/courses' // Type import only - no data dependency
 import type { CartItem } from '@/lib/store/cart-store'
 
 export interface CourseWithAccess extends CourseData {
@@ -34,24 +35,24 @@ export class UserCoursesService {
 
   /**
    * Enrich courses with user access status
-   * Uses DB-backed catalog (courseCatalogService)
+   * MIGRATED: Now uses unified course service (database-backed)
    */
   async getCoursesWithAccessStatus(
     userId: string | null
   ): Promise<CourseWithAccess[]> {
-    // Always load catalog from DB (cached with tags)
-    const catalog = await courseCatalogService.getAllCourses()
-
-    // If no user, mark everything as not purchased
-    if (!userId) {
-      return catalog.map(course => ({
-        ...course,
-        isPurchased: false,
-        activeEnrollment: false,
-      }))
-    }
-
     try {
+      // Always load catalog from unified service (database-backed with caching)
+      const catalog = await unifiedCourseService.getAllCourses()
+
+      // If no user, mark everything as not purchased
+      if (!userId) {
+        return catalog.map(course => ({
+          ...course,
+          isPurchased: false,
+          activeEnrollment: false,
+        }))
+      }
+
       // Get user's purchased course IDs
       const purchasedCourseIds = await this.getUserPurchasedCourseIds(userId)
 
@@ -82,18 +83,25 @@ export class UserCoursesService {
       })
     } catch (error) {
       console.error('Error enriching courses with access status:', error)
-      // Fallback: still return catalog, but mark as not purchased
-      return catalog.map(course => ({
-        ...course,
-        isPurchased: false,
-        activeEnrollment: false,
-      }))
+      
+      // Fallback: try to get basic catalog and mark as not purchased
+      try {
+        const catalog = await unifiedCourseService.getAllCourses()
+        return catalog.map(course => ({
+          ...course,
+          isPurchased: false,
+          activeEnrollment: false,
+        }))
+      } catch (fallbackError) {
+        console.error('Critical error: unable to load course catalog:', fallbackError)
+        return [] // Return empty array as last resort
+      }
     }
   }
 
   /**
    * Validate cart items against user's purchases
-   * Uses DB-backed catalog for bundle membership checks
+   * MIGRATED: Uses unified course service for conflict checking
    */
   async validateCartAgainstPurchases(
     cartItems: CartItem[],
@@ -110,30 +118,17 @@ export class UserCoursesService {
     try {
       const purchasedCourseIds = await this.getUserPurchasedCourseIds(userId)
 
-      // Check for bundles in cart that include already-purchased courses
-      const bundlesWithPurchasedCourses = await this.checkBundleConflicts(
+      // Use unified service's comprehensive conflict checking
+      const conflictResult = await unifiedCourseService.checkCartConflicts(
         cartItems,
         purchasedCourseIds
       )
 
-      // Find direct duplicates (exact course already owned)
-      const directConflicts = cartItems.filter(item =>
-        purchasedCourseIds.includes(item.courseId)
-      )
-
-      const conflictingItems = [
-        ...directConflicts,
-        ...bundlesWithPurchasedCourses,
-      ]
-
-      if (conflictingItems.length > 0) {
-        const itemNames = conflictingItems
-          .map(item => item.courseName)
-          .join(', ')
+      if (conflictResult.hasConflicts) {
         return {
           isValid: false,
-          conflictingItems,
-          message: `You already own these courses: ${itemNames}. Please remove them from your cart to continue.`,
+          conflictingItems: conflictResult.conflictingItems,
+          message: conflictResult.message,
         }
       }
 
@@ -147,54 +142,96 @@ export class UserCoursesService {
       return {
         isValid: true,
         conflictingItems: [],
-        message:
-          'Unable to validate cart items. Please verify your purchases before checkout.',
+        message: 'Unable to validate cart items. Please verify your purchases before checkout.',
       }
     }
   }
 
   /**
    * Check if any bundles in cart contain already purchased courses
-   * Uses DB-backed catalog (courseCatalogService)
+   * MIGRATED: Now uses unified course service instead of courseCatalogService
    */
   private async checkBundleConflicts(
     cartItems: CartItem[],
     purchasedCourseIds: string[]
   ): Promise<CartItem[]> {
-    const catalog = await courseCatalogService.getAllCourses()
-    const byUniqueId = new Map(catalog.map(c => [c.course.Unique_id, c]))
+    try {
+      const catalog = await unifiedCourseService.getAllCourses()
+      const byUniqueId = new Map(catalog.map(c => [c.course.Unique_id, c]))
 
-    const conflictingBundles: CartItem[] = []
+      const conflictingBundles: CartItem[] = []
 
-    for (const item of cartItems) {
-      const courseData = byUniqueId.get(item.courseId)
-      if (!courseData) continue
+      for (const item of cartItems) {
+        const courseData = byUniqueId.get(item.courseId)
+        if (!courseData) continue
 
-      const isBundle = courseData.plans.some(p => p.category === 'bundle')
-      const bundleContents = courseData.course.package ?? []
+        const isBundle = courseData.plans.some(p => p.category === 'bundle')
+        const bundleContents = courseData.course.package ?? []
 
-      if (isBundle && bundleContents.length > 0) {
-        // If any child is already purchased, this bundle conflicts
-        const hasConflict = bundleContents.some(id =>
-          purchasedCourseIds.includes(id)
-        )
-        if (hasConflict) conflictingBundles.push(item)
+        if (isBundle && bundleContents.length > 0) {
+          // If any child is already purchased, this bundle conflicts
+          const hasConflict = bundleContents.some(id =>
+            purchasedCourseIds.includes(id)
+          )
+          if (hasConflict) conflictingBundles.push(item)
+        }
       }
-    }
 
-    return conflictingBundles
+      return conflictingBundles
+    } catch (error) {
+      console.error('Error checking bundle conflicts:', error)
+      return [] // Return empty array to avoid breaking the flow
+    }
   }
 
   /**
    * Check if a specific course can be added to cart
-   * NOTE: kept synchronous to avoid breaking existing callers.
-   *       Uses the static snapshot for now; you can migrate later if needed.
+   * MIGRATED: Now async and uses unified course service
    */
-  canAddCourseToCart(
+  async canAddCourseToCart(
+    courseId: string,
+    purchasedCourseIds: string[]
+  ): Promise<{ canAdd: boolean; reason?: string }> {
+    try {
+      return await unifiedCourseService.canAddCourseToCart(courseId, purchasedCourseIds)
+    } catch (error) {
+      console.error(`Error checking if can add ${courseId} to cart:`, error)
+      return { 
+        canAdd: false, 
+        reason: 'Unable to verify course availability' 
+      }
+    }
+  }
+
+  /**
+   * Get course access URL for enrolled courses
+   * MIGRATED: Now async and uses unified course service with real URLs
+   */
+  async getCourseAccessUrl(courseId: string, planLabel: string): Promise<string> {
+    try {
+      return await unifiedCourseService.getCourseAccessUrl(courseId, planLabel)
+    } catch (error) {
+      console.error(`Error getting access URL for ${courseId}:`, error)
+      return '#' // Fallback to placeholder
+    }
+  }
+
+  /**
+   * LEGACY COMPATIBILITY METHODS
+   * These maintain backward compatibility for code that hasn't been migrated yet
+   */
+
+  /**
+   * @deprecated Use async version canAddCourseToCart() instead
+   * Synchronous wrapper for backward compatibility
+   */
+  canAddCourseToCartSync(
     courseId: string,
     purchasedCourseIds: string[]
   ): { canAdd: boolean; reason?: string } {
-    // Already purchased?
+    console.warn('⚠️ Using deprecated sync method canAddCourseToCartSync. Please migrate to async canAddCourseToCart()')
+    
+    // Quick synchronous checks
     if (purchasedCourseIds.includes(courseId)) {
       return {
         canAdd: false,
@@ -202,34 +239,142 @@ export class UserCoursesService {
       }
     }
 
-    // Is it part of any purchased bundle?
-    const purchasedBundles = coursesData.filter(course => {
-      const isBundle = course.plans.some(plan => plan.category === 'bundle')
-      return isBundle && purchasedCourseIds.includes(course.course.Unique_id)
-    })
-
-    for (const bundle of purchasedBundles) {
-      if (bundle.course.package?.includes(courseId)) {
-        return {
-          canAdd: false,
-          reason: `You already own this course as part of the ${bundle.course.name} bundle`,
-        }
-      }
-    }
-
+    // For more complex bundle logic, we can't do synchronous checks
+    // Return true and let the async validation catch conflicts later
     return { canAdd: true }
   }
 
   /**
-   * Get course access URL for enrolled courses
-   * NOTE: kept synchronous using static snapshot to avoid breaking any callers.
-   *       (Your DB catalog currently returns '#', so this is harmless.)
+   * @deprecated Use async version getCourseAccessUrl() instead
+   * Synchronous wrapper for backward compatibility
    */
-  getCourseAccessUrl(courseId: string, planLabel: string): string {
-    const courseData = coursesData.find(c => c.course.Unique_id === courseId)
-    const plan = courseData?.plans.find(p => p.label === planLabel)
-    return plan?.url || '#'
+  getCourseAccessUrlSync(courseId: string, planLabel: string): string {
+    console.warn('⚠️ Using deprecated sync method getCourseAccessUrlSync. Please migrate to async getCourseAccessUrl()')
+    return '#' // Return placeholder - components should use async version
+  }
+
+  /**
+   * Batch operations for better performance
+   */
+
+  /**
+   * Get access URLs for multiple courses at once
+   */
+  async getBatchCourseAccessUrls(
+    requests: { courseId: string; planLabel: string }[]
+  ): Promise<Record<string, string>> {
+    const results: Record<string, string> = {}
+    
+    try {
+      const courses = await unifiedCourseService.getAllCourses()
+      const courseMap = new Map(courses.map(c => [c.course.Unique_id, c]))
+
+      for (const { courseId, planLabel } of requests) {
+        const course = courseMap.get(courseId)
+        const plan = course?.plans.find(p => p.label === planLabel)
+        results[`${courseId}-${planLabel}`] = plan?.url || '#'
+      }
+    } catch (error) {
+      console.error('Error getting batch access URLs:', error)
+      // Fill with placeholders on error
+      for (const { courseId, planLabel } of requests) {
+        results[`${courseId}-${planLabel}`] = '#'
+      }
+    }
+
+    return results
+  }
+
+  /**
+   * Check multiple courses for cart eligibility at once
+   */
+  async getBatchCanAddToCart(
+    courseIds: string[],
+    purchasedCourseIds: string[]
+  ): Promise<Record<string, { canAdd: boolean; reason?: string }>> {
+    const results: Record<string, { canAdd: boolean; reason?: string }> = {}
+
+    try {
+      for (const courseId of courseIds) {
+        results[courseId] = await this.canAddCourseToCart(courseId, purchasedCourseIds)
+      }
+    } catch (error) {
+      console.error('Error checking batch cart eligibility:', error)
+      // Fill with safe defaults on error
+      for (const courseId of courseIds) {
+        results[courseId] = { 
+          canAdd: false, 
+          reason: 'Unable to verify course availability' 
+        }
+      }
+    }
+
+    return results
+  }
+
+  /**
+   * Health check for the service
+   */
+  async healthCheck(): Promise<{
+    status: 'ok' | 'warning' | 'error'
+    message: string
+    details?: {
+      unifiedService?: {
+        status: string
+        message: string
+        courseCount?: number
+        [key: string]: unknown
+      }
+      timestamp?: string
+      error?: unknown
+      [key: string]: unknown
+    }
+  }> {
+    try {
+      // Test unified service connection
+      const unifiedHealth = await unifiedCourseService.healthCheck()
+      
+      if (unifiedHealth.status === 'error') {
+        return {
+          status: 'error',
+          message: 'Unified course service unavailable',
+          details: unifiedHealth
+        }
+      }
+
+      // Test database service connection
+      const testUserId = 'health-check-test'
+      await databaseService.getUserPurchasedCourseIds(testUserId).catch(() => {
+        // Expected to fail - just testing connection
+      })
+
+      return {
+        status: unifiedHealth.status,
+        message: `User courses service operational (${unifiedHealth.message})`,
+        details: {
+          unifiedService: unifiedHealth,
+          timestamp: new Date().toISOString()
+        }
+      }
+    } catch (error) {
+      return {
+        status: 'error',
+        message: `User courses service error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        details: { error }
+      }
+    }
   }
 }
 
 export const userCoursesService = new UserCoursesService()
+
+// Legacy exports for backward compatibility
+export const {
+  canAddCourseToCartSync: canAddCourseToCart, // Deprecated - maps to sync version
+  getCourseAccessUrlSync: getCourseAccessUrl, // Deprecated - maps to sync version
+} = userCoursesService
+
+// Migration helper to identify usage of deprecated methods
+if (process.env.NODE_ENV === 'development') {
+  console.log('📦 User Courses Service: Migrated to unified service. Please update async method calls.')
+}

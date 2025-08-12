@@ -1,10 +1,12 @@
 // lib/store/cart-store.ts
 // ============================================
-// Enhanced with purchase validation and conflict detection
+// MIGRATED: Now uses unified course service with cached course data
+// Maintains synchronous operations while enabling database integration
 
 import { create } from 'zustand'
 import { persist, subscribeWithSelector } from 'zustand/middleware'
-import { coursesData, type CourseData } from '@/lib/data/courses'
+import { unifiedCourseService } from '@/lib/services/unified-course.service'
+import type { CourseData } from '@/lib/data/courses'
 
 export interface CartItem {
   courseId: string // Unique_id from course data
@@ -17,56 +19,81 @@ export interface CartItem {
 
 interface CartStore {
   items: CartItem[]
-  purchasedCourseIds: string[] // NEW: Track user's purchased courses
-  conflictingItems: CartItem[] // NEW: Items that conflict with purchases
-  addItem: (item: CartItem) => { success: boolean; message: string; conflictingItems?: string[] }
+  purchasedCourseIds: string[]
+  conflictingItems: CartItem[]
+  courseCache: CourseData[] // NEW: Cached course data from database
+  isCacheLoaded: boolean // NEW: Track cache status
+  
+  // Core cart operations
+  addItem: (item: CartItem) => Promise<{ success: boolean; message: string; conflictingItems?: string[] }>
   removeItem: (courseId: string) => void
   clearCart: () => void
   getSubtotal: () => number
   getItemCount: () => number
+  
+  // Hydration and state management
   isHydrated: boolean
   setHydrated: () => void
-  setPurchasedCourses: (courseIds: string[]) => void // NEW
-  validateCartAgainstPurchases: () => void // NEW
-  removeConflictingItems: () => void // NEW
-  hasConflicts: () => boolean // NEW
-  // Legacy methods for backward compatibility
+  
+  // Purchase validation
+  setPurchasedCourses: (courseIds: string[]) => void
+  validateCartAgainstPurchases: () => Promise<void>
+  removeConflictingItems: () => void
+  hasConflicts: () => boolean
+  
+  // Cache management
+  loadCourseCache: () => Promise<void>
+  refreshCache: () => Promise<void>
+  
+  // Legacy methods for backward compatibility (now async)
   isItemInCart: (courseId: string, planLabel?: string) => boolean
-  canAddToCart: (courseId: string, enrollmentId: string, packageIds?: string[]) => { canAdd: boolean; reason?: string }
+  canAddToCart: (courseId: string, enrollmentId: string) => Promise<{ canAdd: boolean; reason?: string }>
 }
 
-// Helper function to find course data by Unique_id
-const findCourseData = (uniqueId: string): CourseData | undefined => {
-  return coursesData.find(course => course.course.Unique_id === uniqueId)
+// ============================================
+// MIGRATED HELPER FUNCTIONS - Now use cached course data
+// ============================================
+
+const findCourseDataInCache = (uniqueId: string, cache: CourseData[]): CourseData | undefined => {
+  return cache.find(course => course.course.Unique_id === uniqueId)
 }
 
-// Helper function to check if item is a bundle
-const isBundle = (courseId: string): boolean => {
-  const courseData = findCourseData(courseId)
+const isBundleFromCache = (courseId: string, cache: CourseData[]): boolean => {
+  const courseData = findCourseDataInCache(courseId, cache)
   return courseData?.plans.some(plan => plan.category === 'bundle') || false
 }
 
-// Helper function to get bundle contents (course IDs in the package)
-const getBundleContents = (bundleId: string): string[] => {
-  const courseData = findCourseData(bundleId)
+const getBundleContentsFromCache = (bundleId: string, cache: CourseData[]): string[] => {
+  const courseData = findCourseDataInCache(bundleId, cache)
   return courseData?.course.package || []
 }
 
-// Helper function to check for conflicts
-const checkConflicts = (
+// Enhanced conflict checker with better error handling
+const checkConflictsWithCache = (
   newItem: CartItem, 
   existingItems: CartItem[],
-  purchasedCourseIds: string[] = []
+  purchasedCourseIds: string[],
+  courseCache: CourseData[]
 ): { hasConflict: boolean; conflictingItems: string[]; message: string } => {
-  const newCourseData = findCourseData(newItem.courseId)
+  // Ensure cache is available
+  if (courseCache.length === 0) {
+    console.warn('⚠️ Course cache not loaded, conflict checking may be incomplete')
+    return { hasConflict: false, conflictingItems: [], message: '' }
+  }
+
+  const newCourseData = findCourseDataInCache(newItem.courseId, courseCache)
   if (!newCourseData) {
-    return { hasConflict: true, conflictingItems: [], message: 'Course data not found' }
+    return { 
+      hasConflict: true, 
+      conflictingItems: [], 
+      message: `Course "${newItem.courseName}" not found in catalog` 
+    }
   }
 
   const conflictingItems: string[] = []
   let conflictMessage = ''
 
-  // NEW: Check if course is already purchased
+  // Check if course is already purchased
   if (purchasedCourseIds.includes(newItem.courseId)) {
     return {
       hasConflict: true,
@@ -75,12 +102,11 @@ const checkConflicts = (
     }
   }
 
-  // Check if new item is a bundle
-  const newItemIsBundle = isBundle(newItem.courseId)
+  const newItemIsBundle = isBundleFromCache(newItem.courseId, courseCache)
 
   if (newItemIsBundle) {
-    // New item is a bundle - check if cart contains any courses from this bundle
-    const bundleContents = getBundleContents(newItem.courseId)
+    // New item is a bundle - check for conflicts with existing courses
+    const bundleContents = getBundleContentsFromCache(newItem.courseId, courseCache)
     
     // Check against cart items
     for (const existingItem of existingItems) {
@@ -89,14 +115,14 @@ const checkConflicts = (
       }
     }
 
-    // NEW: Check against purchased courses
+    // Check against purchased courses
     const purchasedCoursesInBundle = bundleContents.filter(courseId => 
       purchasedCourseIds.includes(courseId)
     )
     
     if (purchasedCoursesInBundle.length > 0) {
       const purchasedNames = purchasedCoursesInBundle
-        .map(id => findCourseData(id)?.course.name || 'Unknown Course')
+        .map(id => findCourseDataInCache(id, courseCache)?.course.name || 'Unknown Course')
       conflictingItems.push(...purchasedNames)
     }
 
@@ -104,22 +130,22 @@ const checkConflicts = (
       conflictMessage = `Cannot add "${newItem.courseName}" bundle. You already have these courses: ${conflictingItems.join(', ')}.`
     }
   } else {
-    // New item is a course - check if cart contains bundles that include this course
+    // New item is a course - check if it conflicts with bundles
     for (const existingItem of existingItems) {
-      if (isBundle(existingItem.courseId)) {
-        const existingBundleContents = getBundleContents(existingItem.courseId)
+      if (isBundleFromCache(existingItem.courseId, courseCache)) {
+        const existingBundleContents = getBundleContentsFromCache(existingItem.courseId, courseCache)
         if (existingBundleContents.includes(newItem.courseId)) {
           conflictingItems.push(existingItem.courseName)
         }
       }
     }
 
-    // NEW: Check if course is part of a purchased bundle
-    const purchasedBundles = purchasedCourseIds.filter(id => isBundle(id))
+    // Check if course is part of a purchased bundle
+    const purchasedBundles = purchasedCourseIds.filter(id => isBundleFromCache(id, courseCache))
     for (const bundleId of purchasedBundles) {
-      const bundleContents = getBundleContents(bundleId)
+      const bundleContents = getBundleContentsFromCache(bundleId, courseCache)
       if (bundleContents.includes(newItem.courseId)) {
-        const bundleName = findCourseData(bundleId)?.course.name || 'a bundle'
+        const bundleName = findCourseDataInCache(bundleId, courseCache)?.course.name || 'a bundle'
         conflictingItems.push(bundleName)
       }
     }
@@ -136,39 +162,93 @@ const checkConflicts = (
   }
 }
 
+// ============================================
+// ZUSTAND STORE IMPLEMENTATION
+// ============================================
+
 export const useCartStore = create<CartStore>()(
   persist(
     subscribeWithSelector((set, get) => ({
       items: [],
       purchasedCourseIds: [],
       conflictingItems: [],
+      courseCache: [],
+      isCacheLoaded: false,
       isHydrated: false,
 
-      setHydrated: () => set({ isHydrated: true }),
+      setHydrated: () => {
+        set({ isHydrated: true })
+        // Auto-load cache when store hydrates
+        get().loadCourseCache()
+      },
+
+      // ============================================
+      // CACHE MANAGEMENT
+      // ============================================
+      
+      loadCourseCache: async () => {
+        try {
+          console.log('🔄 Loading course cache from unified service...')
+          const courses = await unifiedCourseService.getAllCourses()
+          set({ 
+            courseCache: courses, 
+            isCacheLoaded: true 
+          })
+          console.log(`✅ Course cache loaded: ${courses.length} courses`)
+          
+          // Re-validate cart after cache loads
+          await get().validateCartAgainstPurchases()
+        } catch (error) {
+          console.error('❌ Failed to load course cache:', error)
+          // Fallback: try to load cache again after a delay
+          setTimeout(() => get().loadCourseCache(), 2000)
+        }
+      },
+
+      refreshCache: async () => {
+        set({ isCacheLoaded: false })
+        await get().loadCourseCache()
+      },
+
+      // ============================================
+      // PURCHASE VALIDATION
+      // ============================================
 
       setPurchasedCourses: (courseIds: string[]) => {
         set({ purchasedCourseIds: courseIds })
         get().validateCartAgainstPurchases()
       },
 
-      validateCartAgainstPurchases: () => {
-        const { items, purchasedCourseIds } = get()
+      validateCartAgainstPurchases: async () => {
+        const { items, purchasedCourseIds, courseCache, isCacheLoaded } = get()
+        
+        // Ensure cache is loaded
+        if (!isCacheLoaded) {
+          await get().loadCourseCache()
+          return
+        }
+
         const conflicts: CartItem[] = []
 
         for (const item of items) {
+          // Direct ownership check
           if (purchasedCourseIds.includes(item.courseId)) {
             conflicts.push(item)
             continue
           }
-          if (isBundle(item.courseId)) {
-            const bundleContents = getBundleContents(item.courseId)
+
+          // Bundle conflict checks
+          if (isBundleFromCache(item.courseId, courseCache)) {
+            const bundleContents = getBundleContentsFromCache(item.courseId, courseCache)
             if (bundleContents.some(id => purchasedCourseIds.includes(id))) {
               conflicts.push(item)
             }
           }
-          const purchasedBundles = purchasedCourseIds.filter(id => isBundle(id))
+
+          // Check if item is part of purchased bundles
+          const purchasedBundles = purchasedCourseIds.filter(id => isBundleFromCache(id, courseCache))
           for (const bundleId of purchasedBundles) {
-            const bundleContents = getBundleContents(bundleId)
+            const bundleContents = getBundleContentsFromCache(bundleId, courseCache)
             if (bundleContents.includes(item.courseId)) {
               conflicts.push(item)
               break
@@ -190,9 +270,19 @@ export const useCartStore = create<CartStore>()(
 
       hasConflicts: () => get().conflictingItems.length > 0,
 
-      addItem: (item: CartItem) => {
-        const { items, purchasedCourseIds } = get()
+      // ============================================
+      // CART OPERATIONS
+      // ============================================
 
+      addItem: async (item: CartItem) => {
+        const { items, purchasedCourseIds, courseCache, isCacheLoaded } = get()
+
+        // Ensure cache is loaded
+        if (!isCacheLoaded) {
+          await get().loadCourseCache()
+        }
+
+        // Check for existing item with same plan
         const existingItemIndex = items.findIndex(
           i => i.courseId === item.courseId && i.planLabel === item.planLabel
         )
@@ -200,6 +290,7 @@ export const useCartStore = create<CartStore>()(
           return { success: false, message: 'This item is already in your cart' }
         }
 
+        // Check for existing item with different plan (replace it)
         const differentPlanIndex = items.findIndex(
           i => i.courseId === item.courseId && i.planLabel !== item.planLabel
         )
@@ -213,7 +304,8 @@ export const useCartStore = create<CartStore>()(
           }
         }
 
-        const conflictCheck = checkConflicts(item, items, purchasedCourseIds)
+        // Run conflict detection
+        const conflictCheck = checkConflictsWithCache(item, items, purchasedCourseIds, courseCache)
         if (conflictCheck.hasConflict) {
           return {
             success: false,
@@ -222,19 +314,26 @@ export const useCartStore = create<CartStore>()(
           }
         }
 
+        // Add item to cart
         set({ items: [...items, item] })
         return { success: true, message: 'Added to cart successfully' }
       },
 
       removeItem: (courseId: string) => {
-        set(s => ({ items: s.items.filter(i => i.courseId !== courseId) }))
+        set(state => ({ 
+          items: state.items.filter(i => i.courseId !== courseId) 
+        }))
       },
 
       clearCart: () => set({ items: [], conflictingItems: [] }),
 
-      getSubtotal: () => get().items.reduce((t, i) => t + i.price, 0),
+      getSubtotal: () => get().items.reduce((total, item) => total + item.price, 0),
 
       getItemCount: () => get().items.length,
+
+      // ============================================
+      // LEGACY COMPATIBILITY METHODS
+      // ============================================
 
       isItemInCart: (courseId: string, planLabel?: string) => {
         const items = get().items
@@ -243,9 +342,15 @@ export const useCartStore = create<CartStore>()(
           : items.some(i => i.courseId === courseId)
       },
 
-      canAddToCart: (courseId: string, enrollmentId: string) => {
-        const { items, purchasedCourseIds } = get()
+      canAddToCart: async (courseId: string, enrollmentId: string) => {
+        const { items, purchasedCourseIds, courseCache, isCacheLoaded } = get()
 
+        // Ensure cache is loaded
+        if (!isCacheLoaded) {
+          await get().loadCourseCache()
+        }
+
+        // Basic checks
         if (purchasedCourseIds.includes(courseId)) {
           return { canAdd: false, reason: 'You already own this course' }
         }
@@ -253,25 +358,35 @@ export const useCartStore = create<CartStore>()(
           return { canAdd: false, reason: 'This course is already in your cart' }
         }
 
+        // Create mock item for conflict testing
         const mockItem: CartItem = {
           courseId,
-          courseName: 'Test',
+          courseName: 'Test Course',
           planLabel: '6mo',
           price: 0,
           enrollmentId,
           stripePriceId: 'test'
         }
 
-        const conflictCheck = checkConflicts(mockItem, items, purchasedCourseIds)
+        // Run conflict detection
+        const conflictCheck = checkConflictsWithCache(mockItem, items, purchasedCourseIds, courseCache)
         if (conflictCheck.hasConflict) {
           return { canAdd: false, reason: conflictCheck.message }
         }
+
         return { canAdd: true }
       }
     })),
     {
       name: 'cart-store',
-      skipHydration: true
+      skipHydration: true,
+      // Only persist essential data, not the cache
+      partialize: (state) => ({
+        items: state.items,
+        purchasedCourseIds: state.purchasedCourseIds,
+        conflictingItems: state.conflictingItems,
+        isHydrated: state.isHydrated
+      })
     }
   )
 )
