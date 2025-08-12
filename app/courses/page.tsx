@@ -4,7 +4,6 @@
 
 import { auth } from '@clerk/nextjs/server'
 import { CourseCard } from '@/components/CourseCard'
-import { getAllCourses } from '@/lib/data/courses'
 import { userCoursesService } from '@/lib/services/user-courses.service'
 import { PurchasedCoursesProvider } from '@/components/PurchasedCoursesProvider'
 

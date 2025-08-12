@@ -69,7 +69,7 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
         stripePriceId: selectedPlan.stripe_price_id,
       }
 
-      const result = addItem(cartItem)
+      const result = await addItem(cartItem)
       
       if (result.success) {
         toast.success(result.message)

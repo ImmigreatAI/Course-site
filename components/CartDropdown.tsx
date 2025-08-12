@@ -4,13 +4,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { ShoppingCart, Trash2, X, Loader2, AlertCircle, Package, BookOpen, CheckCircle } from 'lucide-react'
 import { useCartStore } from '@/lib/store/cart-store'
+import { unifiedCourseService } from '@/lib/services/unified-course.service'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useUser } from '@clerk/nextjs'
 import { getStripe } from '@/lib/stripe/config'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { coursesData } from '@/lib/data/courses'
 
 interface CartDropdownProps {
   isOpen: boolean
@@ -33,7 +33,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
     items, 
     removeItem, 
     getSubtotal,
-    // ⬇️ NEW: conflict-aware bits from the cart store
+    // Conflict-aware bits from the cart store
     purchasedCourseIds,
     conflictingItems,
     hasConflicts,
@@ -41,14 +41,55 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
 
   const subtotal = getSubtotal()
   const [isLoading, setIsLoading] = useState(false)
+  const [bundleCache, setBundleCache] = useState<Map<string, boolean>>(new Map())
+  const [courseCache, setCourseCache] = useState<Map<string, any>>(new Map())
 
-  // Helper: is this item a bundle (for chip)
+  // Load course data on mount and when items change
+  useEffect(() => {
+    const loadCourseData = async () => {
+      try {
+        const allCourses = await unifiedCourseService.getAllCourses()
+        const newCourseCache = new Map()
+        const newBundleCache = new Map()
+        
+        allCourses.forEach(course => {
+          newCourseCache.set(course.course.Unique_id, course)
+          const isBundle = course.plans.some((plan: any) => plan.category === 'bundle')
+          newBundleCache.set(course.course.Unique_id, isBundle)
+        })
+        
+        setCourseCache(newCourseCache)
+        setBundleCache(newBundleCache)
+      } catch (error) {
+        console.error('❌ Failed to load course data:', error)
+      }
+    }
+
+    loadCourseData()
+  }, [])
+
+  // Helper: is this item a bundle (with caching for performance)
   const isItemBundle = (courseId: string): boolean => {
-    const courseData = coursesData.find(course => course.course.Unique_id === courseId)
-    return courseData?.plans.some(plan => plan.category === 'bundle') || false
+    // Check cache first
+    if (bundleCache.has(courseId)) {
+      return bundleCache.get(courseId) || false
+    }
+
+    // Check course cache
+    const courseData = courseCache.get(courseId)
+    
+    if (courseData) {
+      const isBundle = courseData.plans.some((plan: any) => plan.category === 'bundle')
+      setBundleCache(prev => new Map(prev).set(courseId, isBundle))
+      return isBundle
+    }
+
+    // Fallback: assume it's a course if we don't have data
+    console.log('⚠️ Course data not found in cache for:', courseId)
+    return false
   }
 
-  // NEW: Helper: is this item already owned
+  // Helper: is this item already owned
   const isItemConflicting = (courseId: string) => purchasedCourseIds.includes(courseId)
 
   // Clicks outside → close
@@ -114,7 +155,13 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
     setIsLoading(true)
 
     try {
-      // Original flow: all go through Stripe, expect sessionId
+      console.log('🛒 Starting checkout process:', {
+        itemCount: items.length,
+        total: subtotal,
+        items: items.map(i => ({ courseId: i.courseId, plan: i.planLabel, price: i.price }))
+      })
+
+      // Send checkout request to API
       const response = await fetch('/api/stripe/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -123,33 +170,56 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
+        console.error('❌ Checkout API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData
+        })
         throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`)
       }
 
       const data: CheckoutResponse = await response.json()
+      
       if (!data.sessionId) {
+        console.error('❌ No session ID returned from checkout API')
         throw new Error('No checkout session created')
       }
 
+      console.log('✅ Checkout session created:', {
+        sessionId: data.sessionId,
+        enrollmentIds: data.enrollmentIds?.length || 0
+      })
+
+      // Initialize Stripe
       const stripe = await getStripe()
       if (!stripe) {
+        console.error('❌ Stripe not available')
         throw new Error('Payment system unavailable. Please try again.')
       }
 
+      // Close cart before redirect
       onClose()
 
-      // UX: show a short loading toast
-      toast.loading(subtotal === 0 ? 'Processing free enrollment...' : 'Redirecting to payment...', { duration: 3000 })
+      // Show loading state
+      const loadingMessage = subtotal === 0 ? 'Processing free enrollment...' : 'Redirecting to payment...'
+      toast.loading(loadingMessage, { duration: 3000 })
 
+      console.log('🔄 Redirecting to Stripe checkout...')
+
+      // Redirect to Stripe
       const { error } = await stripe.redirectToCheckout({ sessionId: data.sessionId })
+      
       if (error) {
-        console.error('Stripe redirect error:', error)
+        console.error('❌ Stripe redirect error:', error)
         toast.error(error.message || 'Payment redirect failed')
       }
     } catch (error) {
-      console.error('Checkout error:', error)
+      console.error('❌ Checkout error:', error)
+      
       const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred during checkout'
       toast.error(errorMessage)
+      
+      // Additional network error handling
       if (errorMessage.toLowerCase().includes('network') || errorMessage.toLowerCase().includes('fetch')) {
         toast.error('Network error. Please check your connection and try again.')
       }
@@ -160,10 +230,25 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
 
   const handleRemoveItem = (courseId: string) => {
     try {
+      console.log('🗑️ Removing item from cart:', courseId)
       removeItem(courseId)
       toast.success('Item removed from cart')
+      
+      // Clear bundle cache for this item
+      setBundleCache(prev => {
+        const newCache = new Map(prev)
+        newCache.delete(courseId)
+        return newCache
+      })
+      
+      // Clear course cache for this item
+      setCourseCache(prev => {
+        const newCache = new Map(prev)
+        newCache.delete(courseId)
+        return newCache
+      })
     } catch (error) {
-      console.error('Error removing item:', error)
+      console.error('❌ Error removing item:', error)
       toast.error('Failed to remove item')
     }
   }
@@ -248,7 +333,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
                             Course
                           </Badge>
                         )}
-                        {/* NEW: Owned indicator */}
+                        {/* Owned indicator */}
                         {owned && (
                           <Badge className="bg-amber-600 text-white text-xs">
                             <CheckCircle className="w-3 h-3 mr-1" />
@@ -287,7 +372,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
         {/* Footer */}
         {items.length > 0 && (
           <div className="p-4 border-t border-purple-100/60 space-y-3 bg-purple-50/30">
-            {/* NEW: Conflict warning */}
+            {/* Conflict warning */}
             {hasConflictsInCart && (
               <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
                 <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
