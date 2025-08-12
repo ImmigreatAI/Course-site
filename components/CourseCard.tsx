@@ -1,6 +1,6 @@
 // components/CourseCard.tsx
 // ============================================
-// MINIMAL CHANGES - Only added purchase validation
+// FINAL: Uses actual enrollment URL from user's purchase
 
 'use client'
 
@@ -14,13 +14,27 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { CourseData } from '@/lib/data/courses'
 
+// Enhanced interface to include enrollment data
 interface CourseCardProps {
   course: CourseData & {
     isPurchased?: boolean
     activeEnrollment?: boolean
+    enrollmentUrl?: string // NEW: Direct access URL from enrollment
+    purchasedPlanLabel?: string // NEW: Which plan user actually purchased
   }
-  isPurchased?: boolean        // ✅ added so TS accepts isPurchased prop
-  isAuthenticated?: boolean    // ✅ added so TS accepts isAuthenticated prop
+  isPurchased?: boolean
+  isAuthenticated?: boolean
+}
+
+// Helper function to generate course URL (fallback only)
+function generateCourseUrl(category: 'course' | 'bundle', enrollmentId: string): string {
+  const baseUrl = 'https://courses.getgreencardonyourown.com'
+  
+  if (category === 'bundle') {
+    return `${baseUrl}/program/${enrollmentId}`
+  } else {
+    return `${baseUrl}/path-player?courseid=${enrollmentId}`
+  }
 }
 
 export function CourseCard({ course , isPurchased, isAuthenticated = false  }: CourseCardProps) {
@@ -29,18 +43,18 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
   const [selectedPlan, setSelectedPlan] = useState(course.plans[0])
   const [isLoading, setIsLoading] = useState(false)
 
-  // NEW: Check if course is purchased (from props or store)
+  // Check if course is purchased (from props or store)
   const isCoursePurchased =
   Boolean(isPurchased ?? course.isPurchased) ||
   (isAuthenticated && purchasedCourseIds.includes(course.course.Unique_id))
   
-  // Check if this course is in cart (any plan) - ORIGINAL LOGIC
+  // Check if this course is in cart (any plan)
   const isInCart = items.some(item => item.courseId === course.course.Unique_id)
   
-  // Get the specific plan in cart if any - ORIGINAL LOGIC
+  // Get the specific plan in cart if any
   const cartItem = items.find(item => item.courseId === course.course.Unique_id)
   
-  // Check if current course is a bundle - ORIGINAL LOGIC
+  // Check if current course is a bundle
   const isBundle = course.plans.some(plan => plan.category === 'bundle')
   const bundleContents = course.course.package || []
 
@@ -51,7 +65,7 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
   const handleAddToCart = async () => {
     if (!selectedPlan) return
     
-    // NEW: Check if already purchased
+    // Check if already purchased
     if (isCoursePurchased) {
       toast.info('You already own this course. Access it from My Courses.')
       return
@@ -74,7 +88,7 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
       if (result.success) {
         toast.success(result.message)
       } else {
-        // Show detailed error message for conflicts - ORIGINAL LOGIC
+        // Show detailed error message for conflicts
         if (result.conflictingItems && result.conflictingItems.length > 0) {
           toast.error(result.message, {
             duration: 6000, // Longer duration for complex messages
@@ -91,19 +105,45 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
     }
   }
 
-  // NEW: Handle access for purchased courses
+  // ENHANCED: Use actual enrollment URL from purchase
   const handleAccessCourse = () => {
-    router.push('/my-courses')
+    // Priority 1: Use enrollment URL from user's actual purchase
+    if (course.enrollmentUrl) {
+      console.log('Using enrollment URL:', course.enrollmentUrl)
+      window.open(course.enrollmentUrl, '_blank')
+      return
+    }
+
+    // Priority 2: If user purchased a specific plan, use that plan's URL
+    if (course.purchasedPlanLabel) {
+      const purchasedPlan = course.plans.find(p => p.label === course.purchasedPlanLabel)
+      if (purchasedPlan && purchasedPlan.url !== '#') {
+        console.log('Using purchased plan URL:', purchasedPlan.url)
+        window.open(purchasedPlan.url, '_blank')
+        return
+      }
+    }
+
+    // Priority 3: Fallback to selected plan URL
+    if (selectedPlan.url !== '#') {
+      console.log('Using selected plan URL:', selectedPlan.url)
+      window.open(selectedPlan.url, '_blank')
+      return
+    }
+
+    // Priority 4: Generate URL as last resort
+    const fallbackUrl = generateCourseUrl(selectedPlan.category, selectedPlan.enrollment_id)
+    console.log('Using generated URL:', fallbackUrl)
+    window.open(fallbackUrl, '_blank')
   }
 
-  // Calculate bundle savings (simplified calculation) - ORIGINAL LOGIC
+  // Calculate bundle savings (simplified calculation)
   const bundleSavings = isBundle && bundleContents.length > 0 ?
     Math.round((bundleContents.length * 47 - selectedPlan.price)) : 0
 
-  // ORIGINAL UI WITH MINIMAL MODIFICATIONS
   return (
     <div className="group relative h-full">
-      {/* NEW: Small owned badge if purchased */}
+      {/* Small owned badge if purchased */}
       {isCoursePurchased && (
         <div className="absolute -top-2 -right-2 z-10">
           <Badge className="bg-green-600 text-white border-green-600 shadow-lg text-xs">
@@ -119,9 +159,9 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
         "transition-all duration-300 hover:shadow-2xl hover:scale-[1.02]",
         "hover:bg-white/90 flex flex-col"
       )}>
-        {/* Card Header - ORIGINAL */}
+        {/* Card Header */}
         <div className="p-6 flex-1 flex flex-col">
-          {/* Title Section - ORIGINAL */}
+          {/* Title Section */}
           <div className="mb-4">
             <div className="flex items-start justify-between mb-2">
               <h3 className="text-xl font-bold text-gray-900 line-clamp-2 flex-1">
@@ -135,7 +175,16 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
               )}
             </div>
             
-            {/* Bundle Contents - ORIGINAL */}
+            {/* Show purchased plan info if owned */}
+            {isCoursePurchased && course.purchasedPlanLabel && (
+              <div className="mt-2 p-2 bg-green-50 rounded-lg">
+                <p className="text-xs font-medium text-green-700">
+                  You own: {course.purchasedPlanLabel === '6mo' ? '6 Month Access' : '7 Day Trial'}
+                </p>
+              </div>
+            )}
+            
+            {/* Bundle Contents */}
             {isBundle && bundleContents.length > 0 && (
               <div className="mt-2 p-3 bg-purple-50 rounded-lg">
                 <p className="text-xs font-medium text-purple-700 mb-1">
@@ -148,12 +197,12 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
             )}
           </div>
 
-          {/* Description - ORIGINAL */}
+          {/* Description */}
           <p className="text-sm text-gray-600 mb-4 line-clamp-3 flex-1">
             {course.course.description || 'Comprehensive course designed to guide you through the immigration process'}
           </p>
 
-          {/* Features - ORIGINAL */}
+          {/* Features */}
           <div className="space-y-2 mb-4">
             {course.course && (
               <div className="flex items-center text-sm text-gray-700">
@@ -175,7 +224,7 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
             )}
           </div>
 
-          {/* Plan Selection - ORIGINAL (hidden if purchased) */}
+          {/* Plan Selection - Only show if not purchased and multiple plans */}
           {!isCoursePurchased && course.plans.length > 1 && (
             <div className="mb-4">
               <div className="flex gap-2">
@@ -199,9 +248,9 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
           )}
         </div>
 
-        {/* Card Footer - ORIGINAL */}
+        {/* Card Footer */}
         <div className="p-6 pt-0 mt-auto">
-          {/* Price Display - ORIGINAL */}
+          {/* Price Display */}
           <div className="flex items-center justify-between mb-4">
             <div>
               <span className="text-2xl font-bold text-gray-900">
@@ -213,9 +262,9 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
             </div>
           </div>
 
-          {/* Action Button - MODIFIED: Show Access if purchased, otherwise original logic */}
+          {/* Action Button */}
           {isCoursePurchased ? (
-            // NEW: Access button for purchased courses
+            // Access button for purchased courses - uses enrollment URL
             <Button
               onClick={handleAccessCourse}
               className={cn(
@@ -229,7 +278,7 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
               Access Course
             </Button>
           ) : isInCart && cartItem?.planLabel === selectedPlan.label ? (
-            // ORIGINAL: In cart state
+            // In cart state
             <Button
               disabled
               className="w-full rounded-xl py-2.5 font-medium bg-gray-100 text-gray-500 cursor-not-allowed"
@@ -238,7 +287,7 @@ export function CourseCard({ course , isPurchased, isAuthenticated = false  }: C
               In Cart
             </Button>
           ) : (
-            // ORIGINAL: Add to cart button
+            // Add to cart button
             <Button
               onClick={handleAddToCart}
               disabled={isLoading || !isHydrated}
