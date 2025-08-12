@@ -1,11 +1,10 @@
 // lib/store/cart-store.ts
 // ============================================
-// MIGRATED: Now uses unified course service with cached course data
-// Maintains synchronous operations while enabling database integration
+// FIXED: Now uses client-safe course service instead of server-only unified service
 
 import { create } from 'zustand'
 import { persist, subscribeWithSelector } from 'zustand/middleware'
-import { unifiedCourseService } from '@/lib/services/unified-course.service'
+import { clientCourseService } from '@/lib/services/client-course.service' // CHANGED: Use client service
 import type { CourseData } from '@/lib/data/courses'
 
 export interface CartItem {
@@ -21,8 +20,8 @@ interface CartStore {
   items: CartItem[]
   purchasedCourseIds: string[]
   conflictingItems: CartItem[]
-  courseCache: CourseData[] // NEW: Cached course data from database
-  isCacheLoaded: boolean // NEW: Track cache status
+  courseCache: CourseData[] // Cached course data from API
+  isCacheLoaded: boolean // Track cache status
   
   // Core cart operations
   addItem: (item: CartItem) => Promise<{ success: boolean; message: string; conflictingItems?: string[] }>
@@ -45,13 +44,13 @@ interface CartStore {
   loadCourseCache: () => Promise<void>
   refreshCache: () => Promise<void>
   
-  // Legacy methods for backward compatibility (now async)
+  // Legacy methods for backward compatibility
   isItemInCart: (courseId: string, planLabel?: string) => boolean
   canAddToCart: (courseId: string, enrollmentId: string) => Promise<{ canAdd: boolean; reason?: string }>
 }
 
 // ============================================
-// MIGRATED HELPER FUNCTIONS - Now use cached course data
+// HELPER FUNCTIONS - Now use cached course data
 // ============================================
 
 const findCourseDataInCache = (uniqueId: string, cache: CourseData[]): CourseData | undefined => {
@@ -183,13 +182,13 @@ export const useCartStore = create<CartStore>()(
       },
 
       // ============================================
-      // CACHE MANAGEMENT
+      // CACHE MANAGEMENT - FIXED: Uses client service
       // ============================================
       
       loadCourseCache: async () => {
         try {
-          console.log('🔄 Loading course cache from unified service...')
-          const courses = await unifiedCourseService.getAllCourses()
+          console.log('🔄 Loading course cache from API...')
+          const courses = await clientCourseService.getAllCourses() // CHANGED: Use client service
           set({ 
             courseCache: courses, 
             isCacheLoaded: true 
@@ -260,15 +259,21 @@ export const useCartStore = create<CartStore>()(
       },
 
       removeConflictingItems: () => {
-        const { items, conflictingItems } = get()
-        const conflictIds = conflictingItems.map(i => i.courseId)
-        set({
-          items: items.filter(i => !conflictIds.includes(i.courseId)),
+        const { conflictingItems } = get()
+        set(state => ({
+          items: state.items.filter(item => 
+            !conflictingItems.some(conflict => 
+              conflict.courseId === item.courseId && 
+              conflict.planLabel === item.planLabel
+            )
+          ),
           conflictingItems: []
-        })
+        }))
       },
 
-      hasConflicts: () => get().conflictingItems.length > 0,
+      hasConflicts: () => {
+        return get().conflictingItems.length > 0
+      },
 
       // ============================================
       // CART OPERATIONS
@@ -282,29 +287,7 @@ export const useCartStore = create<CartStore>()(
           await get().loadCourseCache()
         }
 
-        // Check for existing item with same plan
-        const existingItemIndex = items.findIndex(
-          i => i.courseId === item.courseId && i.planLabel === item.planLabel
-        )
-        if (existingItemIndex !== -1) {
-          return { success: false, message: 'This item is already in your cart' }
-        }
-
-        // Check for existing item with different plan (replace it)
-        const differentPlanIndex = items.findIndex(
-          i => i.courseId === item.courseId && i.planLabel !== item.planLabel
-        )
-        if (differentPlanIndex !== -1) {
-          const updated = [...items]
-          updated[differentPlanIndex] = item
-          set({ items: updated })
-          return {
-            success: true,
-            message: `Updated to ${item.planLabel === '6mo' ? '6 Month' : '7 Day'} plan`
-          }
-        }
-
-        // Run conflict detection
+        // Check for conflicts
         const conflictCheck = checkConflictsWithCache(item, items, purchasedCourseIds, courseCache)
         if (conflictCheck.hasConflict) {
           return {
@@ -314,25 +297,49 @@ export const useCartStore = create<CartStore>()(
           }
         }
 
-        // Add item to cart
-        set({ items: [...items, item] })
-        return { success: true, message: 'Added to cart successfully' }
+        // Check if exact item already exists
+        const existingItem = items.find(i => 
+          i.courseId === item.courseId && i.planLabel === item.planLabel
+        )
+        
+        if (existingItem) {
+          return {
+            success: false,
+            message: `"${item.courseName}" (${item.planLabel}) is already in your cart.`
+          }
+        }
+
+        // Add item
+        set(state => ({
+          items: [...state.items, item]
+        }))
+
+        return {
+          success: true,
+          message: `"${item.courseName}" added to cart`
+        }
       },
 
       removeItem: (courseId: string) => {
-        set(state => ({ 
-          items: state.items.filter(i => i.courseId !== courseId) 
+        set(state => ({
+          items: state.items.filter(item => item.courseId !== courseId)
         }))
       },
 
-      clearCart: () => set({ items: [], conflictingItems: [] }),
+      clearCart: () => {
+        set({ items: [], conflictingItems: [] })
+      },
 
-      getSubtotal: () => get().items.reduce((total, item) => total + item.price, 0),
+      getSubtotal: () => {
+        return get().items.reduce((total, item) => total + item.price, 0)
+      },
 
-      getItemCount: () => get().items.length,
+      getItemCount: () => {
+        return get().items.length
+      },
 
       // ============================================
-      // LEGACY COMPATIBILITY METHODS
+      // LEGACY METHODS
       // ============================================
 
       isItemInCart: (courseId: string, planLabel?: string) => {

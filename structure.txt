@@ -88,6 +88,7 @@
 │   │   ├── enrollment.service.ts
 │   │   ├── learnworlds.service.ts
 │   │   ├── my-courses.service.ts
+│   │   ├── unified-course.service.ts
 │   │   ├── user-courses.service.ts
 │   │   └── webhook.service.ts
 │   ├── store
@@ -126,4 +127,4 @@
     ├── index.ts
     └── supabase.ts
 
-35 directories, 92 files
+35 directories, 93 files
