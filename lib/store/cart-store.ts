@@ -1,10 +1,10 @@
 // lib/store/cart-store.ts
 // ============================================
-// FIXED: Now uses client-safe course service instead of server-only unified service
+// ENHANCED: Auto-refresh cache when course not found
 
 import { create } from 'zustand'
 import { persist, subscribeWithSelector } from 'zustand/middleware'
-import { clientCourseService } from '@/lib/services/client-course.service' // CHANGED: Use client service
+import { clientCourseService } from '@/lib/services/client-course.service'
 import type { CourseData } from '@/lib/data/courses'
 
 export interface CartItem {
@@ -20,8 +20,9 @@ interface CartStore {
   items: CartItem[]
   purchasedCourseIds: string[]
   conflictingItems: CartItem[]
-  courseCache: CourseData[] // Cached course data from API
-  isCacheLoaded: boolean // Track cache status
+  courseCache: CourseData[]
+  isCacheLoaded: boolean
+  lastCacheUpdate: number // NEW: Track when cache was last updated
   
   // Core cart operations
   addItem: (item: CartItem) => Promise<{ success: boolean; message: string; conflictingItems?: string[] }>
@@ -41,7 +42,7 @@ interface CartStore {
   hasConflicts: () => boolean
   
   // Cache management
-  loadCourseCache: () => Promise<void>
+  loadCourseCache: (force?: boolean) => Promise<void>
   refreshCache: () => Promise<void>
   
   // Legacy methods for backward compatibility
@@ -50,7 +51,7 @@ interface CartStore {
 }
 
 // ============================================
-// HELPER FUNCTIONS - Now use cached course data
+// HELPER FUNCTIONS
 // ============================================
 
 const findCourseDataInCache = (uniqueId: string, cache: CourseData[]): CourseData | undefined => {
@@ -67,25 +68,41 @@ const getBundleContentsFromCache = (bundleId: string, cache: CourseData[]): stri
   return courseData?.course.package || []
 }
 
-// Enhanced conflict checker with better error handling
-const checkConflictsWithCache = (
+// ENHANCED: Auto-refresh cache when course not found
+const checkConflictsWithCache = async (
   newItem: CartItem, 
   existingItems: CartItem[],
   purchasedCourseIds: string[],
-  courseCache: CourseData[]
-): { hasConflict: boolean; conflictingItems: string[]; message: string } => {
+  courseCache: CourseData[],
+  refreshCacheCallback: () => Promise<void>
+): Promise<{ hasConflict: boolean; conflictingItems: string[]; message: string }> => {
   // Ensure cache is available
   if (courseCache.length === 0) {
     console.warn('⚠️ Course cache not loaded, conflict checking may be incomplete')
     return { hasConflict: false, conflictingItems: [], message: '' }
   }
 
-  const newCourseData = findCourseDataInCache(newItem.courseId, courseCache)
+  let newCourseData = findCourseDataInCache(newItem.courseId, courseCache)
+  
+  // NEW: If course not found, try refreshing cache once
+  if (!newCourseData) {
+    console.log(`🔄 Course "${newItem.courseId}" not found in cache, refreshing...`)
+    try {
+      await refreshCacheCallback()
+      // Get fresh cache after refresh (this will be updated by the callback)
+      const freshStore = useCartStore.getState()
+      newCourseData = findCourseDataInCache(newItem.courseId, freshStore.courseCache)
+    } catch (error) {
+      console.error('❌ Failed to refresh cache:', error)
+    }
+  }
+
+  // If still not found after refresh, it's a genuine error
   if (!newCourseData) {
     return { 
       hasConflict: true, 
       conflictingItems: [], 
-      message: `Course "${newItem.courseName}" not found in catalog` 
+      message: `Course "${newItem.courseName}" not found in catalog. Please refresh the page and try again.` 
     }
   }
 
@@ -173,6 +190,7 @@ export const useCartStore = create<CartStore>()(
       conflictingItems: [],
       courseCache: [],
       isCacheLoaded: false,
+      lastCacheUpdate: 0,
       isHydrated: false,
 
       setHydrated: () => {
@@ -182,16 +200,27 @@ export const useCartStore = create<CartStore>()(
       },
 
       // ============================================
-      // CACHE MANAGEMENT - FIXED: Uses client service
+      // ENHANCED CACHE MANAGEMENT
       // ============================================
       
-      loadCourseCache: async () => {
+      loadCourseCache: async (force = false) => {
+        const { lastCacheUpdate } = get()
+        const cacheAge = Date.now() - lastCacheUpdate
+        const maxCacheAge = 5 * 60 * 1000 // 5 minutes
+        
+        // Skip if cache is recent and not forced
+        if (!force && cacheAge < maxCacheAge && lastCacheUpdate > 0) {
+          console.log('🔄 Using existing cache (still fresh)')
+          return
+        }
+        
         try {
           console.log('🔄 Loading course cache from API...')
-          const courses = await clientCourseService.getAllCourses() // CHANGED: Use client service
+          const courses = await clientCourseService.getAllCourses()
           set({ 
             courseCache: courses, 
-            isCacheLoaded: true 
+            isCacheLoaded: true,
+            lastCacheUpdate: Date.now()
           })
           console.log(`✅ Course cache loaded: ${courses.length} courses`)
           
@@ -200,13 +229,14 @@ export const useCartStore = create<CartStore>()(
         } catch (error) {
           console.error('❌ Failed to load course cache:', error)
           // Fallback: try to load cache again after a delay
-          setTimeout(() => get().loadCourseCache(), 2000)
+          setTimeout(() => get().loadCourseCache(true), 2000)
         }
       },
 
       refreshCache: async () => {
-        set({ isCacheLoaded: false })
-        await get().loadCourseCache()
+        console.log('🔄 Force refreshing course cache...')
+        set({ isCacheLoaded: false, lastCacheUpdate: 0 })
+        await get().loadCourseCache(true)
       },
 
       // ============================================
@@ -276,7 +306,7 @@ export const useCartStore = create<CartStore>()(
       },
 
       // ============================================
-      // CART OPERATIONS
+      // ENHANCED CART OPERATIONS
       // ============================================
 
       addItem: async (item: CartItem) => {
@@ -287,8 +317,15 @@ export const useCartStore = create<CartStore>()(
           await get().loadCourseCache()
         }
 
-        // Check for conflicts
-        const conflictCheck = checkConflictsWithCache(item, items, purchasedCourseIds, courseCache)
+        // ENHANCED: Check for conflicts with auto-refresh capability
+        const conflictCheck = await checkConflictsWithCache(
+          item, 
+          items, 
+          purchasedCourseIds, 
+          courseCache,
+          get().refreshCache // Pass refresh function
+        )
+        
         if (conflictCheck.hasConflict) {
           return {
             success: false,
@@ -375,8 +412,15 @@ export const useCartStore = create<CartStore>()(
           stripePriceId: 'test'
         }
 
-        // Run conflict detection
-        const conflictCheck = checkConflictsWithCache(mockItem, items, purchasedCourseIds, courseCache)
+        // ENHANCED: Run conflict detection with auto-refresh
+        const conflictCheck = await checkConflictsWithCache(
+          mockItem, 
+          items, 
+          purchasedCourseIds, 
+          courseCache,
+          get().refreshCache
+        )
+        
         if (conflictCheck.hasConflict) {
           return { canAdd: false, reason: conflictCheck.message }
         }
@@ -392,7 +436,8 @@ export const useCartStore = create<CartStore>()(
         items: state.items,
         purchasedCourseIds: state.purchasedCourseIds,
         conflictingItems: state.conflictingItems,
-        isHydrated: state.isHydrated
+        isHydrated: state.isHydrated,
+        // Don't persist lastCacheUpdate - always refresh on reload
       })
     }
   )

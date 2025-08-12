@@ -1,7 +1,6 @@
 // lib/services/client-course.service.ts
 // ============================================
-// CLIENT-SAFE course service for browser usage
-// Uses API endpoints instead of direct database calls
+// ENHANCED: Better cache busting and error handling
 
 import type { CourseData } from '@/lib/data/courses'
 
@@ -9,20 +8,26 @@ export class ClientCourseService {
   private retryCount = 0
   private maxRetries = 3
   private lastSuccessfulFetch: CourseData[] | null = null
+  private lastFetchTime = 0
 
   /**
-   * Fetch courses via API endpoint (client-safe)
+   * Fetch courses via API endpoint with cache busting options
    */
-  async getAllCourses(): Promise<CourseData[]> {
+  async getAllCourses(forceFresh = false): Promise<CourseData[]> {
     try {
       console.log('🔄 Fetching courses from API...')
       
-      const response = await fetch('/api/courses', {
+      // Build URL with cache busting if needed
+      const url = forceFresh 
+        ? `/api/courses?_t=${Date.now()}` // Cache bust with timestamp
+        : '/api/courses'
+      
+      const response = await fetch(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
         },
-        // Add cache busting to ensure fresh data when needed
+        // Always use no-store to ensure we get fresh data when requested
         cache: 'no-store'
       })
 
@@ -36,9 +41,18 @@ export class ClientCourseService {
         throw new Error('Invalid API response format')
       }
 
+      // Validate the response has basic course structure
+      if (data.length > 0) {
+        const firstCourse = data[0]
+        if (!firstCourse.course?.Unique_id || !firstCourse.course?.name) {
+          throw new Error('Invalid course data structure in API response')
+        }
+      }
+
       // Success - reset retry count and cache the result
       this.retryCount = 0
       this.lastSuccessfulFetch = data
+      this.lastFetchTime = Date.now()
       
       console.log(`✅ Successfully loaded ${data.length} courses from API`)
       return data
@@ -47,8 +61,11 @@ export class ClientCourseService {
       this.retryCount++
       console.error(`❌ API error (attempt ${this.retryCount}/${this.maxRetries}):`, error)
 
-      // Use last successful fetch if available
-      if (this.lastSuccessfulFetch) {
+      // Use last successful fetch if available and not too old (15 minutes)
+      const cacheAge = Date.now() - this.lastFetchTime
+      const maxCacheAge = 15 * 60 * 1000 // 15 minutes
+      
+      if (this.lastSuccessfulFetch && cacheAge < maxCacheAge) {
         console.log('🔄 Using cached course data from last successful fetch')
         return this.lastSuccessfulFetch
       }
@@ -65,11 +82,22 @@ export class ClientCourseService {
   }
 
   /**
+   * Force refresh - clear cache and fetch fresh data
+   */
+  async forceRefresh(): Promise<CourseData[]> {
+    console.log('🔄 Force refreshing course data...')
+    this.lastSuccessfulFetch = null
+    this.lastFetchTime = 0
+    this.retryCount = 0
+    return this.getAllCourses(true)
+  }
+
+  /**
    * Get single course by unique_id
    */
-  async getCourseByUniqueId(uniqueId: string): Promise<CourseData | null> {
+  async getCourseByUniqueId(uniqueId: string, forceFresh = false): Promise<CourseData | null> {
     try {
-      const allCourses = await this.getAllCourses()
+      const allCourses = await this.getAllCourses(forceFresh)
       return allCourses.find(c => c.course.Unique_id === uniqueId) || null
     } catch (error) {
       console.error(`Error finding course ${uniqueId}:`, error)
@@ -104,6 +132,34 @@ export class ClientCourseService {
   }
 
   /**
+   * Check if course exists (useful for validation)
+   */
+  async courseExists(uniqueId: string): Promise<boolean> {
+    try {
+      const course = await this.getCourseByUniqueId(uniqueId)
+      return course !== null
+    } catch (error) {
+      console.error(`Error checking if course ${uniqueId} exists:`, error)
+      return false
+    }
+  }
+
+  /**
+   * Get cache age in milliseconds
+   */
+  getCacheAge(): number {
+    return Date.now() - this.lastFetchTime
+  }
+
+  /**
+   * Check if cache is stale (older than 5 minutes)
+   */
+  isCacheStale(): boolean {
+    const maxAge = 5 * 60 * 1000 // 5 minutes
+    return this.getCacheAge() > maxAge
+  }
+
+  /**
    * Minimal fallback when everything fails
    */
   private getMinimalFallback(): CourseData[] {
@@ -131,18 +187,30 @@ export class ClientCourseService {
   /**
    * Health check for debugging
    */
-  async healthCheck(): Promise<{ status: string; message: string; courseCount?: number }> {
+  async healthCheck(): Promise<{ 
+    status: string; 
+    message: string; 
+    courseCount?: number;
+    cacheAge?: number;
+    lastFetch?: string;
+  }> {
     try {
       const courses = await this.getAllCourses()
+      const cacheAge = this.getCacheAge()
+      
       return {
         status: 'healthy',
         message: 'Client course service operational',
-        courseCount: courses.length
+        courseCount: courses.length,
+        cacheAge,
+        lastFetch: this.lastFetchTime ? new Date(this.lastFetchTime).toISOString() : 'never'
       }
     } catch (error) {
       return {
         status: 'error',
-        message: `Client course service error: ${error instanceof Error ? error.message : 'Unknown error'}`
+        message: `Client course service error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        cacheAge: this.getCacheAge(),
+        lastFetch: this.lastFetchTime ? new Date(this.lastFetchTime).toISOString() : 'never'
       }
     }
   }
