@@ -54,7 +54,7 @@ export function EnrollmentCard({ enrollment }: EnrollmentCardProps) {
           asChild
           className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white"
         >
-          <a href={enrollment.course_url} target="_blank" rel="noopener noreferrer">
+          <a href={enrollment.course_url}>
             <ExternalLink className="w-4 h-4 mr-2" />
             Access Course
           </a>
