@@ -7,7 +7,16 @@ import { unstable_cache as cache } from 'next/cache'
 import { createAnonServerClient } from '@/lib/supabase/anon'
 import { coursesData, type CourseData } from '@/lib/data/courses' // Fallback only
 import type { CartItem } from '@/lib/store/cart-store'
-
+interface ProcessedCheckoutItem {
+  courseId: string
+  courseName: string
+  planLabel: string
+  price: number
+  enrollmentId: string
+  stripePriceId: string
+  category: 'course' | 'bundle'
+  url: string
+}
 type RawCourse = {
   id: string
   unique_id: string
@@ -210,14 +219,14 @@ export class UnifiedCourseService {
   /**
    * Validate checkout item against database course data
    */
-  async validateCheckoutItem(item: {
+    async validateCheckoutItem(item: {
     courseId: string
     courseName: string
     planLabel: string
     price: number
     enrollmentId: string
     stripePriceId: string
-  }): Promise<{ isValid: boolean; error?: string; processedItem?: any }> {
+    }): Promise<{ isValid: boolean; error?: string; processedItem?: ProcessedCheckoutItem }> {
     const course = await this.findCourseData(item.courseId)
     
     if (!course) {
@@ -261,9 +270,7 @@ export class UnifiedCourseService {
       }
     }
 
-    return {
-      isValid: true,
-      processedItem: {
+    const processedItem: ProcessedCheckoutItem = {
         courseId: item.courseId,
         courseName: course.course.name,
         planLabel: item.planLabel,
@@ -272,8 +279,12 @@ export class UnifiedCourseService {
         stripePriceId: plan.stripe_price_id,
         category: plan.category || 'course',
         url: plan.url || ''
-      }
-    }
+        }
+
+        return {
+        isValid: true,
+        processedItem
+        }
   }
 
   /**

@@ -6,7 +6,14 @@
 import { unifiedCourseService } from '@/lib/services/unified-course.service'
 import { databaseService } from '@/lib/services/database.service'
 import type { CheckoutItem, ProcessedItem } from '@/lib/types/checkout.types'
-
+interface HealthCheckDetails {
+  courseCount?: number
+  dbResponseTime?: string
+  serviceStatus?: string
+  timestamp: string
+  issue?: string
+  error?: string
+}
 export class CheckoutValidationService {
   /**
    * Validate items against user's purchases using database
@@ -258,9 +265,9 @@ export class CheckoutValidationService {
    * Health check for validation service
    */
   async healthCheck(): Promise<{ 
-    status: 'healthy' | 'degraded' | 'unhealthy'; 
-    details: Record<string, any> 
-  }> {
+  status: 'healthy' | 'degraded' | 'unhealthy'; 
+  details: HealthCheckDetails 
+}> {
     try {
       // Test database connection
       const startTime = Date.now()
@@ -270,12 +277,12 @@ export class CheckoutValidationService {
       // Test course service health
       const serviceHealth = await unifiedCourseService.healthCheck()
 
-      const details = {
-        courseCount: testCourses.length,
-        dbResponseTime: `${dbResponseTime}ms`,
-        serviceStatus: serviceHealth.status,
-        timestamp: new Date().toISOString()
-      }
+      const details: HealthCheckDetails = {
+            courseCount: testCourses.length,
+            dbResponseTime: `${dbResponseTime}ms`,
+            serviceStatus: serviceHealth.status,
+            timestamp: new Date().toISOString()
+          }
 
       if (serviceHealth.status === 'ok' && testCourses.length > 0 && dbResponseTime < 1000) {
         return { status: 'healthy', details }

@@ -11,6 +11,7 @@ import { useUser } from '@clerk/nextjs'
 import { getStripe } from '@/lib/stripe/config'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import type { CourseData } from '@/lib/data/courses'
 
 interface CartDropdownProps {
   isOpen: boolean
@@ -42,7 +43,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
   const subtotal = getSubtotal()
   const [isLoading, setIsLoading] = useState(false)
   const [bundleCache, setBundleCache] = useState<Map<string, boolean>>(new Map())
-  const [courseCache, setCourseCache] = useState<Map<string, any>>(new Map())
+  const [courseCache, setCourseCache] = useState<Map<string, CourseData>>(new Map())
 
   // Load course data on mount and when items change
   useEffect(() => {
@@ -53,10 +54,10 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
         const newBundleCache = new Map()
         
         allCourses.forEach(course => {
-          newCourseCache.set(course.course.Unique_id, course)
-          const isBundle = course.plans.some((plan: any) => plan.category === 'bundle')
-          newBundleCache.set(course.course.Unique_id, isBundle)
-        })
+            newCourseCache.set(course.course.Unique_id, course)
+            const isBundle = course.plans.some((plan) => plan.category === 'bundle')
+            newBundleCache.set(course.course.Unique_id, isBundle)
+          })
         
         setCourseCache(newCourseCache)
         setBundleCache(newBundleCache)
@@ -79,7 +80,7 @@ export function CartDropdown({ isOpen, onClose }: CartDropdownProps) {
     const courseData = courseCache.get(courseId)
     
     if (courseData) {
-      const isBundle = courseData.plans.some((plan: any) => plan.category === 'bundle')
+      const isBundle = courseData.plans.some((plan) => plan.category === 'bundle')
       setBundleCache(prev => new Map(prev).set(courseId, isBundle))
       return isBundle
     }
