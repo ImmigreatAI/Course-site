@@ -1,54 +1,25 @@
 // app/page.tsx
 // ============================================
-// Responsive minimalist home page with a11y & design fixes
-// Fix: guard all window access for SSR, remove styled-jsx dependency that could
-// trigger "Cannot read properties of null (reading '_')" in some setups.
-// Added tiny runtime tests for the breakpoint logic.
+// Improved home page with shadcn/ui carousel for testimonials
+// Consistent card sizes, smooth animations, and better responsiveness
 
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselNext,
+  CarouselPrevious,
+  type CarouselApi,
+} from '@/components/ui/carousel'
 import { ArrowRight, BookOpen, Clock, BarChart3, DollarSign, Star, ChevronLeft, ChevronRight } from 'lucide-react'
 
-// small dev-only component to run assertions without exporting anything from the page
-function DevAsserts() {
-  useEffect(() => {
-    try {
-      console.assert(slidesPerViewFromWidth(360) === 1, 'slidesPerViewFromWidth(360) should be 1')
-      console.assert(slidesPerViewFromWidth(800) === 2, 'slidesPerViewFromWidth(800) should be 2')
-      console.assert(slidesPerViewFromWidth(1200) === 3, 'slidesPerViewFromWidth(1200) should be 3')
-    } catch (e) {
-      console.error('Breakpoint tests failed', e)
-    }
-  }, [])
-  return null
-}
-
-// --- pure util for tests & hook
-function slidesPerViewFromWidth(w: number): 1 | 2 | 3 {
-  if (w >= 1024) return 3
-  if (w >= 768) return 2
-  return 1
-}
-
-// --- hook to read responsive breakpoints safely in SSR
-function useSlidesPerView() {
-  const [spv, setSpv] = useState<1 | 2 | 3>(1) // never reference window during initial render
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const compute = () => setSpv(slidesPerViewFromWidth(window.innerWidth))
-    compute()
-    window.addEventListener('resize', compute)
-    return () => window.removeEventListener('resize', compute)
-  }, [])
-
-  return spv
-}
-
+// Rating Stars Component (unchanged)
 function RatingStars({ rating }: { rating: number }) {
   const full = Math.floor(rating)
   const half = rating - full >= 0.5
@@ -66,7 +37,6 @@ function RatingStars({ rating }: { rating: number }) {
               className="absolute inset-0 w-4 h-4 text-yellow-400"
               aria-hidden
               fill="currentColor"
-              // inline style to avoid styled-jsx; clip to half
               style={{ clipPath: 'inset(0 50% 0 0)' }}
             />
           )}
@@ -77,62 +47,76 @@ function RatingStars({ rating }: { rating: number }) {
   )
 }
 
+// Testimonial data
+const testimonials = [
+  {
+    id: 1,
+    name: 'Sarah Chen',
+    location: 'San Francisco, CA',
+    rating: 4.5,
+    content:
+      'The EB-1A course was incredibly detailed and helped me understand exactly what I needed for my petition. The step-by-step guidance made the complex process manageable.',
+  },
+  {
+    id: 2,
+    name: 'Ahmed Hassan',
+    location: 'Austin, TX',
+    rating: 5.0,
+    content:
+      'immigreat.ai provided the clarity I needed for my green card journey. The courses are well-structured and the content is always up-to-date with current policies.',
+  },
+  {
+    id: 3,
+    name: 'Maria Rodriguez',
+    location: 'Miami, FL',
+    rating: 4.5,
+    content:
+      'As someone who was completely new to the immigration process, these courses gave me the confidence to navigate my application successfully. Highly recommended!',
+  },
+  {
+    id: 4,
+    name: 'David Kim',
+    location: 'Seattle, WA',
+    rating: 5.0,
+    content:
+      'The comprehensive coverage and practical examples helped me prepare my documents efficiently. The course structure is excellent and worth every penny.',
+  },
+  {
+    id: 5,
+    name: 'Lisa Wang',
+    location: 'New York, NY',
+    rating: 4.5,
+    content:
+      'Expert guidance throughout my entire journey. The instructors are knowledgeable and the community support is invaluable for navigating complex requirements.',
+  },
+  {
+    id: 6,
+    name: 'John Martinez',
+    location: 'Chicago, IL',
+    rating: 5.0,
+    content:
+      'Best investment I made for my immigration journey. The detailed walkthroughs and real-world examples made everything clear and achievable.',
+  },
+]
+
+// Improved Testimonial Carousel Component
 function TestimonialCarousel() {
-  const testimonials = [
-    {
-      name: 'Sarah Chen',
-      location: 'San Francisco, CA',
-      rating: 4.5,
-      content:
-        'The EB-1A course was incredibly detailed and helped me understand exactly what I needed for my petition. The step-by-step guidance made the complex process manageable.',
-    },
-    {
-      name: 'Ahmed Hassan',
-      location: 'Austin, TX',
-      rating: 4.5,
-      content:
-        'immigreat.ai provided the clarity I needed for my green card journey. The courses are well-structured and the content is always up-to-date with current policies.',
-    },
-    {
-      name: 'Maria Rodriguez',
-      location: 'Miami, FL',
-      rating: 4.5,
-      content:
-        'As someone who was completely new to the immigration process, these courses gave me the confidence to navigate my application successfully. Highly recommended!',
-    },
-    {
-      name: 'David Rodriguez',
-      location: 'Miami, FL',
-      rating: 4.5,
-      content:
-        'As someone who was completely new to the immigration process, these courses gave me the confidence to navigate my application successfully.',
-    },
-    {
-      name: 'Lisa Wang',
-      location: 'Seattle, WA',
-      rating: 4.5,
-      content:
-        'The comprehensive coverage and practical examples helped me prepare my documents efficiently. The course structure is excellent.',
-    },
-  ]
+  const [api, setApi] = useState<CarouselApi>()
+  const [current, setCurrent] = useState(0)
+  const [count, setCount] = useState(0)
 
-  // responsive slides per view
-  const itemsPerSlide = useSlidesPerView()
-
-  const totalSlides = useMemo(
-    () => Math.max(1, Math.ceil(testimonials.length / itemsPerSlide)),
-    [testimonials.length, itemsPerSlide]
-  )
-  const [currentSlide, setCurrentSlide] = useState(0)
-
-  // keep currentSlide in range when itemsPerSlide changes (e.g., on resize)
   useEffect(() => {
-    setCurrentSlide((prev) => Math.min(prev, totalSlides - 1))
-  }, [totalSlides])
+    if (!api) {
+      return
+    }
 
-  const nextSlide = () => setCurrentSlide((prev) => (prev + 1) % totalSlides)
-  const prevSlide = () => setCurrentSlide((prev) => (prev - 1 + totalSlides) % totalSlides)
-  const goToSlide = (i: number) => setCurrentSlide(i)
+    setCount(api.scrollSnapList().length)
+    setCurrent(api.selectedScrollSnap() + 1)
+
+    api.on('select', () => {
+      setCurrent(api.selectedScrollSnap() + 1)
+    })
+  }, [api])
 
   return (
     <section
@@ -140,15 +124,16 @@ function TestimonialCarousel() {
       role="region"
       aria-labelledby="testimonials-heading"
     >
-      {/* Background glows */}
+      {/* Background Effects */}
       <div className="absolute inset-0 opacity-20 pointer-events-none">
-        <div className="absolute top-0 left-0 w-96 h-96 bg-gradient-to-br from-purple-400 to-pink-400 -translate-x-48 -translate-y-48 rotate-45 animate-pulse" />
-        <div className="absolute bottom-0 right-0 w-96 h-96 bg-gradient-to-br from-pink-400 to-indigo-400 translate-x-48 translate-y-48 -rotate-45 animate-pulse" />
-        <div className="absolute top-1/2 left-1/4 w-64 h-64 bg-gradient-to-br from-indigo-400 to-purple-400 -translate-y-32 rotate-12 opacity-60" />
-        <div className="absolute top-1/4 right-1/4 w-48 h-48 bg-gradient-to-br from-pink-400 to-purple-400 translate-y-16 -rotate-12 opacity-40" />
+        <div className="absolute top-0 left-0 w-96 h-96 bg-gradient-to-br from-purple-400 to-pink-400 blur-3xl -translate-x-48 -translate-y-48 animate-pulse" />
+        <div className="absolute bottom-0 right-0 w-96 h-96 bg-gradient-to-br from-pink-400 to-indigo-400 blur-3xl translate-x-48 translate-y-48 animate-pulse" />
+        <div className="absolute top-1/2 left-1/4 w-64 h-64 bg-gradient-to-br from-indigo-400 to-purple-400 blur-2xl -translate-y-32 opacity-60" />
+        <div className="absolute top-1/4 right-1/4 w-48 h-48 bg-gradient-to-br from-pink-400 to-purple-400 blur-2xl translate-y-16 opacity-40" />
       </div>
 
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Section Header */}
         <div className="text-center mb-12">
           <h2 id="testimonials-heading" className="text-3xl md:text-4xl font-bold text-white mb-2">
             Trusted by Thousands of
@@ -156,79 +141,88 @@ function TestimonialCarousel() {
           <h3 className="text-2xl md:text-3xl font-semibold text-purple-200">Happy Customers</h3>
         </div>
 
-        {/* Track */}
-        <div className="relative">
-          <div className="overflow-hidden">
-            <div
-              className="flex transition-transform duration-500 ease-in-out"
-              style={{ transform: `translateX(-${currentSlide * 100}%)` }}
-            >
-              {Array.from({ length: totalSlides }).map((_, slideIndex) => (
-                <div key={slideIndex} className="w-full flex-shrink-0">
-                  <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-                    {testimonials
-                      .slice(slideIndex * itemsPerSlide, (slideIndex + 1) * itemsPerSlide)
-                      .map((t, idx) => (
-                        <Card
-                          key={`${slideIndex}-${idx}`}
-                          className="bg-white/95 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02] h-full"
-                        >
-                          <CardContent className="p-6 h-full flex flex-col">
-                            <div className="flex items-start gap-4 mb-4">
-                              <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white font-semibold text-lg">
-                                {t.name.charAt(0)}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <h4 className="font-semibold text-gray-900 text-lg truncate">{t.name}</h4>
-                                <p className="text-gray-500 text-sm truncate">{t.location}</p>
-                                <div className="mt-2">
-                                  <RatingStars rating={t.rating} />
-                                </div>
-                              </div>
-                            </div>
-                            <p className="text-gray-700 leading-relaxed line-clamp-6 sm:line-clamp-5 md:line-clamp-4 lg:line-clamp-6">“{t.content}”</p>
-                          </CardContent>
-                        </Card>
-                      ))}
-                  </div>
+        {/* Carousel - removed built-in navigation buttons */}
+        <Carousel
+          setApi={setApi}
+          opts={{
+            align: 'start',
+            loop: true,
+          }}
+          className="w-full"
+        >
+          <CarouselContent className="-ml-2 md:-ml-4">
+            {testimonials.map((testimonial) => (
+              <CarouselItem key={testimonial.id} className="pl-2 md:pl-4 basis-full sm:basis-1/2 lg:basis-1/3">
+                <div className="h-full">
+                  <Card className="h-full bg-white/95 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02] hover:-translate-y-1">
+                    <CardContent className="p-6 h-full flex flex-col">
+                      {/* Avatar and Info */}
+                      <div className="flex items-start gap-4 mb-4">
+                        <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white font-semibold text-lg shadow-lg flex-shrink-0">
+                          {testimonial.name.split(' ').map(n => n[0]).join('')}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h4 className="font-semibold text-gray-900 text-lg">
+                            {testimonial.name}
+                          </h4>
+                          <p className="text-gray-500 text-sm">
+                            {testimonial.location}
+                          </p>
+                          <div className="mt-2">
+                            <RatingStars rating={testimonial.rating} />
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Testimonial Content */}
+                      <blockquote className="flex-1">
+                        <p className="text-gray-700 leading-relaxed italic">
+                          &quot;{testimonial.content}&quot;
+                        </p>
+                      </blockquote>
+                    </CardContent>
+                  </Card>
                 </div>
-              ))}
-            </div>
-          </div>
+              </CarouselItem>
+            ))}
+          </CarouselContent>
+        </Carousel>
 
-          {/* Nav Arrows */}
-          <Button
-            onClick={prevSlide}
-            variant="outline"
-            size="icon"
-            aria-label="Previous testimonials"
-            className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 lg:-translate-x-8 rounded-full border-white/30 hover:border-white hover:bg-white/20 bg-white/10 text-white shadow-lg backdrop-blur-sm transition-all duration-300 hover:scale-110 focus-visible:ring-white"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </Button>
-          <Button
-            onClick={nextSlide}
-            variant="outline"
-            size="icon"
-            aria-label="Next testimonials"
-            className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 lg:translate-x-8 rounded-full border-white/30 hover:border-white hover:bg-white/20 bg-white/10 text-white shadow-lg backdrop-blur-sm transition-all duration-300 hover:scale-110 focus-visible:ring-white"
-          >
-            <ChevronRight className="w-5 h-5" />
-          </Button>
-
-          {/* Dots */}
-          <div className="flex justify-center gap-3 mt-8">
-            {Array.from({ length: totalSlides }).map((_, i) => (
+        {/* Bottom Navigation Container */}
+        <div className="flex justify-between items-center mt-8 px-4 lg:px-0">
+          {/* Dot Indicators - Bottom Left */}
+          <div className="flex gap-2">
+            {Array.from({ length: count }).map((_, index) => (
               <button
-                key={i}
-                onClick={() => goToSlide(i)}
-                aria-label={`Go to slide ${i + 1}`}
-                aria-current={i === currentSlide}
-                className={`w-3 h-3 rounded-full transition-all duration-300 hover:scale-125 ${
-                  i === currentSlide ? 'bg-white shadow-lg' : 'bg-white/40 hover:bg-white/60'
+                key={index}
+                onClick={() => api?.scrollTo(index)}
+                aria-label={`Go to testimonial ${index + 1}`}
+                aria-current={current === index + 1}
+                className={`rounded-full transition-all duration-300 ${
+                  current === index + 1
+                    ? 'w-8 h-2 bg-white shadow-lg'
+                    : 'w-2 h-2 bg-white/40 hover:bg-white/60'
                 }`}
               />
             ))}
+          </div>
+
+          {/* Navigation Arrows - Bottom Right */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => api?.scrollPrev()}
+              aria-label="Previous testimonials"
+              className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/30 text-white hover:bg-white/20 hover:border-white transition-all duration-300 hover:scale-110 flex items-center justify-center"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => api?.scrollNext()}
+              aria-label="Next testimonials"
+              className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-sm border border-white/30 text-white hover:bg-white/20 hover:border-white transition-all duration-300 hover:scale-110 flex items-center justify-center"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
           </div>
         </div>
       </div>
@@ -239,7 +233,7 @@ function TestimonialCarousel() {
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50/30 via-white to-pink-50/30">
-      {/* Hero */}
+      {/* Hero Section */}
       <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-24">
         <div className="text-center">
           <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-6 leading-tight">
@@ -252,7 +246,7 @@ export default function HomePage() {
             Expert-curated courses designed to guide you through your green card journey with confidence and clarity.
           </p>
 
-          {/* CTAs */}
+          {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link href="/courses">
               <Button className="w-full sm:w-auto bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white rounded-xl px-8 py-4 text-lg font-medium shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
@@ -273,7 +267,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Why Choose Us */}
+      {/* Why Choose Us Section */}
       <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="text-center mb-12">
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Why Choose immigreat.ai?</h2>
@@ -283,10 +277,10 @@ export default function HomePage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {/* Self-Paced */}
-          <Card className="backdrop-blur-xl bg-white/60 border border-purple-200/30 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
+          {/* Feature Cards */}
+          <Card className="backdrop-blur-xl bg-white/60 border border-purple-200/30 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 hover:-translate-y-1">
             <CardContent className="p-6 text-center">
-              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl mx-auto mb-4">
+              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl mx-auto mb-4 shadow-lg">
                 <Clock className="w-6 h-6 text-white" />
               </div>
               <h3 className="text-xl font-semibold text-gray-900 mb-3">Self-Paced</h3>
@@ -294,10 +288,9 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {/* In-Depth */}
-          <Card className="backdrop-blur-xl bg-white/60 border border-purple-200/30 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
+          <Card className="backdrop-blur-xl bg-white/60 border border-purple-200/30 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 hover:-translate-y-1">
             <CardContent className="p-6 text-center">
-              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl mx-auto mb-4">
+              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl mx-auto mb-4 shadow-lg">
                 <BookOpen className="w-6 h-6 text-white" />
               </div>
               <h3 className="text-xl font-semibold text-gray-900 mb-3">In-Depth & Detailed</h3>
@@ -305,10 +298,9 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {/* Data-Backed */}
-          <Card className="backdrop-blur-xl bg-white/60 border border-purple-200/30 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
+          <Card className="backdrop-blur-xl bg-white/60 border border-purple-200/30 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 hover:-translate-y-1">
             <CardContent className="p-6 text-center">
-              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl mx-auto mb-4">
+              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl mx-auto mb-4 shadow-lg">
                 <BarChart3 className="w-6 h-6 text-white" />
               </div>
               <h3 className="text-xl font-semibold text-gray-900 mb-3">Data-Backed</h3>
@@ -316,10 +308,9 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {/* Affordable */}
-          <Card className="backdrop-blur-xl bg-white/60 border border-purple-200/30 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
+          <Card className="backdrop-blur-xl bg-white/60 border border-purple-200/30 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 hover:-translate-y-1">
             <CardContent className="p-6 text-center">
-              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl mx-auto mb-4">
+              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl mx-auto mb-4 shadow-lg">
                 <DollarSign className="w-6 h-6 text-white" />
               </div>
               <h3 className="text-xl font-semibold text-gray-900 mb-3">Affordable Plans</h3>
@@ -329,12 +320,12 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Testimonials */}
+      {/* Testimonial Carousel */}
       <TestimonialCarousel />
 
-      {/* CTA */}
+      {/* Final CTA Section */}
       <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-        <Card className="backdrop-blur-xl bg-gradient-to-r from-purple-600/10 to-pink-600/10 border border-purple-200/40 shadow-2xl shadow-purple-100/50">
+        <Card className="backdrop-blur-xl bg-gradient-to-r from-purple-600/10 to-pink-600/10 border border-purple-200/40 shadow-2xl">
           <CardContent className="p-8 md:p-12 text-center">
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Ready to Start Your Journey?</h2>
             <p className="text-lg text-gray-600 mb-8 max-w-2xl mx-auto">
