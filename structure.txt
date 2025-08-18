@@ -7,6 +7,8 @@
 │   │   ├── cart
 │   │   │   └── validate
 │   │   │       └── route.ts
+│   │   ├── courses
+│   │   │   └── route.ts
 │   │   ├── debug
 │   │   │   └── test-db
 │   │   │       └── route.ts
@@ -62,6 +64,7 @@
 │       ├── badge.tsx
 │       ├── button.tsx
 │       ├── card.tsx
+│       ├── carousel.tsx
 │       ├── dialog.tsx
 │       ├── dropdown-menu.tsx
 │       ├── input.tsx
@@ -83,6 +86,7 @@
 │   │   ├── checkout-session.service.ts
 │   │   ├── checkout-validation.service.ts
 │   │   ├── checkout.service.ts
+│   │   ├── client-course.service.ts
 │   │   ├── course-catalog.service.ts
 │   │   ├── database.service.ts
 │   │   ├── enrollment.service.ts
@@ -127,4 +131,4 @@
     ├── index.ts
     └── supabase.ts
 
-35 directories, 93 files
+36 directories, 96 files
