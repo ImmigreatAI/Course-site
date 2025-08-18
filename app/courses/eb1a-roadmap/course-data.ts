@@ -14,7 +14,7 @@ import { CourseData, CourseContent, RelatedCourse } from './types'
 // Main course data
 export const courseData: CourseData = {
   course: {
-    Unique_id: "eb1a-roadmap",
+    Unique_id: "ultimate-eb1a-roadmap",
     name: "EB-1A Green Card Roadmap",
     description: "Complete step-by-step guide to securing your EB-1A green card through extraordinary ability demonstration",
     category: "course"
@@ -22,21 +22,21 @@ export const courseData: CourseData = {
   plans: [
     {
       label: "6mo" as const,
-      price: 297,
+      price: 199,
       category: "course" as const,
       type: "paid" as const,
-      enrollment_id: "eb1a-6mo-2024",
-      stripe_price_id: "price_eb1a_6mo",
-      url: "https://courses.getgreencardonyourown.com/path-player?courseid=eb1a-6mo-2024"
+      enrollment_id: "ultimate-eb1a-roadmap",
+      stripe_price_id: "price_1RqbKR4ZCTDn2SPMMOawPzi2",
+      url: "https://courses.getgreencardonyourown.com/path-player?courseid=ultimate-eb1a-roadmap"
     },
     {
       label: "7day" as const,
-      price: 29,
+      price: 79,
       category: "course" as const,
       type: "paid" as const,
-      enrollment_id: "eb1a-7day-trial",
-      stripe_price_id: "price_eb1a_7day",
-      url: "https://courses.getgreencardonyourown.com/path-player?courseid=eb1a-7day-trial"
+      enrollment_id: "utmimate-eb1a-duplicate",
+      stripe_price_id: "price_1RqbLl4ZCTDn2SPMjPIPiyA7",
+      url: "https://courses.getgreencardonyourown.com/path-player?courseid=utmimate-eb1a-duplicate"
     }
   ]
 }
@@ -124,9 +124,9 @@ export const relatedCourses: RelatedCourse[] = [
     students: 634
   },
   {
-    id: "perm-labor-guide",
-    title: "PERM Labor Certification Guide",
-    description: "Complete employer-sponsored green card process",
+    id: "ultimate-eb2-niw-roadmap",
+    title: "NIW Part 2  Guide",
+    description: "Complete NIW green card process",
     price: 167,
     rating: 4.7,
     students: 523
