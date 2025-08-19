@@ -54,7 +54,6 @@ export const courseContent: CourseContent = {
     { icon: Video, text: "12+ hours of video content" },
     { icon: FileText, text: "50+ document templates" },
     { icon: Download, text: "Downloadable resources" },
-    { icon: MessageCircle, text: "Community forum access" },
     { icon: Clock, text: "Access period based on plan selected" }
   ],
   curriculum: [
