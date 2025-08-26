@@ -6,6 +6,7 @@ import { auth } from '@clerk/nextjs/server'
 import { CourseCard } from '@/components/CourseCard'
 import { userCoursesService } from '@/lib/services/user-courses.service'
 import { PurchasedCoursesProvider } from '@/components/PurchasedCoursesProvider'
+import Link from 'next/link'
 
 
 export default async function CoursesPage() {
