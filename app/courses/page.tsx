@@ -32,7 +32,9 @@ export default async function CoursesPage() {
               Our Courses
             </h1>
             <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              Choose from our comprehensive selection of immigration courses designed to guide you through your green card journey
+              <Link  href="https://getgreencardonyourown.com/course-demo">Demo Course catalog Page</Link>
+              <br />
+              <Link  href="https://getgreencardonyourown.com/courses/eb1a-roadmap">Demo Course Detailed Page</Link>
             </p>
           </div>
           
