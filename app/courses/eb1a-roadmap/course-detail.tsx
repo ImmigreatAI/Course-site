@@ -44,9 +44,10 @@ export default function EB1ACourseDetail() {
           <div className="lg:col-span-2 space-y-8">
             <CourseHeader course={courseData.course} />
             <VideoPreview />
+            <CourseAbout />
             <WhatYoullLearn highlights={courseContent.highlights} />
             <CourseCurriculum curriculum={courseContent.curriculum} />
-            <CourseAbout />
+            
           </div>
 
           {/* Sidebar - Desktop */}
@@ -73,14 +74,15 @@ export default function EB1ACourseDetail() {
           {/* 4. Video Preview */}
           <VideoPreview />
           
-          {/* 5. What You'll Learn */}
+          {/* 5. Course About */}
+          <CourseAbout />
+
+          {/* 6. What You'll Learn */}
           <WhatYoullLearn highlights={courseContent.highlights} />
           
-          {/* 6. Course Curriculum */}
+          {/* 7. Course Curriculum */}
           <CourseCurriculum curriculum={courseContent.curriculum} />
           
-          {/* 7. Course About */}
-          <CourseAbout />
           
           {/* 8. Related Courses */}
           <RelatedCourses courses={relatedCourses} />
