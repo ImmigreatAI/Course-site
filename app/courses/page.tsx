@@ -33,9 +33,9 @@ export default async function CoursesPage() {
               Our Courses
             </h1>
             <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              <Link  href="https://getgreencardonyourown.com/course-demo">Demo Course catalog Page</Link>
+              <Link  href="https://getgreencardonyourown.com/course-demo" className='underline text-blue-500'>Demo Course catalog Page</Link>
               <br />
-              <Link  href="https://getgreencardonyourown.com/courses/eb1a-roadmap">Demo Course Detailed Page</Link>
+              <Link  href="https://getgreencardonyourown.com/courses/eb1a-roadmap" className='underline text-blue-500'>Demo Course Detailed Page</Link>
             </p>
           </div>
           
